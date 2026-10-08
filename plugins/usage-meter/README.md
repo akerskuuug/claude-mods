@@ -25,3 +25,14 @@ The mod infers billing from what Claude Code reports: rate-limit windows (`five_
 ```
 
 Pick the user scope when prompted.
+
+The mod runs as function hooks, which Claude Code only loads when they are switched on. Add this to `~/.claude/settings.json` (merge it into an existing `env` block) and restart Claude Code:
+
+```json
+"env": {
+  "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"
+}
+```
+
+Without it the mod installs but shows nothing.
+
