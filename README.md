@@ -1,14 +1,27 @@
-# usage-meter
+# claude-mods
 
-A Claude Code mod that shows, around the prompt:
+A collection of Claude Code mods, published as a plugin marketplace.
 
-- **Above:** git branch (with a `●` when dirty and a label when in a worktree) on the left; model, effort and context usage on the right.
-- **Below:** 5-hour and weekly rate limits as bars with the percent left and time until reset.
+## Mods
+
+| Mod | Description |
+| --- | --- |
+| [usage-meter](plugins/usage-meter) | Branch, worktree, model, effort and context above the prompt; 5h and weekly limits below it |
 
 ## Install
 
+Add the marketplace once:
+
 ```
-/plugin install usage-meter --marketplace akerskuuug/claude-usage-meter
+/plugin marketplace add akerskuuug/claude-mods
 ```
 
-Answer `y` to add the marketplace, then pick the user scope.
+Then install any mod from it:
+
+```
+/plugin install usage-meter@claude-mods
+```
+
+## Adding a mod
+
+Create `plugins/<name>/` with a `.claude-plugin/plugin.json` and its `hooks/`, then add an entry to `.claude-plugin/marketplace.json`.
