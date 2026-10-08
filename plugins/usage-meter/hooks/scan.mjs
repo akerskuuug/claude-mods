@@ -22,15 +22,19 @@ if (process.env.LOCALAPPDATA) {
   } catch {}
 }
 
+// Sonnet 5.5 cache reads dropped from $0.20 to $0.10 on 2026-10-07.
+const SONNET_55_CUT = Date.UTC(2026, 9, 7)
+
 // $ per million tokens; mirrors ClaudeMeter's Pricing.rate(for:). `prompt` is the request's
-// input + cache tokens (Haiku 5.5 has a higher rate card above 100k).
-const rate = (model, prompt) => {
+// input + cache tokens (Haiku 5.5 has a higher rate card above 100k); `t` is when it ran.
+const rate = (model, prompt, t) => {
   const m = model.toLowerCase()
   if (m.includes('fable')) return { i: 10, o: 50, r: m.includes('5-1') ? 0.025 : 0.1, known: true }
   if (m.includes('opus')) {
     if (['opus-4-0', 'opus-4-1', 'opus-4-2025', '3-opus'].some(s => m.includes(s))) return { i: 15, o: 75, r: 0.1, known: true }
     return m.includes('opus-5-5') ? { i: 4, o: 20, r: 0.05, known: true } : { i: 5, o: 25, r: 0.1, known: true }
   }
+  if (m.includes('sonnet-5-5')) return { i: 2, o: 10, r: t >= SONNET_55_CUT ? 0.05 : 0.1, known: true }
   if (m.includes('sonnet')) return m.includes('sonnet-5') ? { i: 2, o: 10, r: 0.1, known: true } : { i: 3, o: 15, r: 0.1, known: true }
   if (m.includes('haiku')) {
     if (m.includes('haiku-5')) return prompt > 100_000 ? { i: 0.5, o: 2.5, r: 0.1, known: true } : { i: 0.1, o: 0.5, r: 0.1, known: true }
@@ -94,7 +98,7 @@ for (const f of files) {
   }
 }
 for (const c of seen.values()) {
-  const r = rate(c.model, c.i + c.w5 + c.w1 + c.cr)
+  const r = rate(c.model, c.i + c.w5 + c.w1 + c.cr, c.t)
   if (!r.known) unpriced.add(c.model)
   // Fast mode is 2x the standard token rates on every model that offers it.
   const x = c.fast ? 2 : 1
