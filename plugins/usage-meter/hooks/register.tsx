@@ -370,7 +370,8 @@ export const register: Register = on => {
     const { Box, Text } = $.ui.resolve(e)
 
     const left = contextLeft(u)
-    const { filled, empty } = barFill(left, CONTEXT_CELLS)
+    // Fills as the window is used; the colour still turns red as little is left.
+    const { filled, empty } = barFill(100 - left, CONTEXT_CELLS)
 
     return (
       <Box flexDirection="row" flexGrow={1} flexShrink={1} justifyContent="flex-end">

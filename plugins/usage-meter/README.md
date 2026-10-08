@@ -5,7 +5,7 @@ A Claude Code mod that shows, around the prompt:
 - **Above:** git branch (with a `●` when dirty and a label when in a worktree) on the left; model and effort on the right, followed by the usage meter:
   - **Subscription:** 5-hour and weekly rate limits as bars with the percent left and time until reset.
   - **Pay-per-token:** a `Cost` control. Press the period button to switch between Session, Today, 7 days and 30 days; `ⓘ` explains how the estimate works.
-- **Below:** context as a bar twice as wide as the limit bars (filled by the share of the window still free, coloured like them), with used/window beside it.
+- **Below:** context as a bar twice as wide as the limit bars (fills as the window is used; green, then yellow, then red as little is left), with used/window beside it.
 
 ## Subscription or metered?
 
