@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Color, EngineInterface, Register } from 'claude-code'
 
-import type { GitState, Usage } from '../types'
+import type { CostView, GitState, Usage } from '../types'
 
 const usage = atom({ plugin: 'usage-meter', key: 'usage' } as const, null)
 const now = atom({ plugin: 'usage-meter', key: 'now' } as const, null)
@@ -9,11 +9,60 @@ const git = atom({ plugin: 'usage-meter', key: 'git' } as const, null)
 const model = atom({ plugin: 'usage-meter', key: 'model' } as const, null)
 const effort = atom({ plugin: 'usage-meter', key: 'effort' } as const, null)
 
+const costView = atom({ plugin: 'usage-meter', key: 'costView' } as const, 'session' as CostView)
+const costOpen = atom({ plugin: 'usage-meter', key: 'costOpen' } as const, false)
+const costInfo = atom({ plugin: 'usage-meter', key: 'costInfo' } as const, false)
+const ledger = atom({ plugin: 'usage-meter', key: 'ledger' } as const, {} as Record<string, number>)
+const sessionCost = atom({ plugin: 'usage-meter', key: 'sessionCost' } as const, 0)
+
 const BAR_CELLS = 10
 // Dark-terminal track colour; ThemeKey has no neutral background.
 const TRACK_COLOR = '#3a3a3a'
 const BRANCH_CHARS = 56
 const MINUTE = 60_000
+
+export type BillingMode = 'subscription' | 'metered' | 'unknown'
+
+// Rate-limit windows only exist on a subscription (Pro/Max/Team/Enterprise
+// seats). With none and a priced response already in, billing is per token.
+// Before the first response there is no reading, so it is unknown.
+export function billingMode(u: Usage | null, cost: number): BillingMode {
+  if (u?.rateLimits.some(r => r.kind === 'five_hour' || r.kind === 'seven_day')) return 'subscription'
+  return u && cost > 0 ? 'metered' : 'unknown'
+}
+
+export const COST_VIEWS: { id: CostView; label: string; days: number }[] = [
+  { id: 'session', label: 'Session', days: 0 },
+  { id: 'today', label: 'Today', days: 1 },
+  { id: '7d', label: '7 days', days: 7 },
+  { id: '30d', label: '30 days', days: 30 },
+]
+
+// Local-date key, so "today" rolls over at local midnight.
+export function dayKey(ms: number): string {
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+// Sum of the last `days` local days including today.
+export function sumDays(map: Record<string, number>, nowMs: number, days: number): number {
+  let total = 0
+  for (let i = 0; i < days; i++) total += map[dayKey(nowMs - i * 86_400_000)] ?? 0
+  return total
+}
+
+// Session is exact (reported by Claude Code); the rest are marked as estimates.
+export function formatCost(id: CostView, usd: number): string {
+  return `${id === 'session' ? '' : '~'}$${usd.toFixed(2)}`
+}
+
+const COST_EXPLANATION = [
+  'You appear to be billed per token, so cost is shown instead of 5-hour and weekly limits.',
+  'Session is the exact cost Claude Code reports for this session.',
+  "Today, 7 days and 30 days (~) are estimates: this mod scans the local logs in ~/.claude/projects and Cowork sessions, counts each message's token usage once, and prices it at public API list prices per model.",
+  'Discounts, other machines and logs older than 30 days are not reflected, and unrecognised models are priced as Sonnet. Refreshed at most once a minute.',
+]
 
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`
@@ -104,6 +153,27 @@ async function refreshGit($: EngineInterface) {
   }
 }
 
+let lastScan = 0
+
+// Re-estimates the per-day cost from local logs; throttled to 60 s and only
+// run for metered users. Where a host refuses $.process, the last value stays.
+async function refreshLedger($: EngineInterface) {
+  const time = await $.clock.now()
+  if (time - lastScan < MINUTE) return
+  lastScan = time
+  try {
+    const run = await $.process.run(['node', `${$.plugin.root}/hooks/scan.mjs`, '30'], { timeoutMs: 60_000 })
+    if (run.exitCode !== 0) return
+    const { days } = JSON.parse(run.stdout) as { days: Record<string, number> }
+    await update($, ledger, () => days)
+  } catch {}
+}
+
+async function noteCost($: EngineInterface, cost: { usd: number } | undefined, u: Usage) {
+  if (cost) await update($, sessionCost, () => cost.usd)
+  if (billingMode(u, cost?.usd ?? 0) === 'metered') refreshLedger($).catch(() => {})
+}
+
 async function tick($: EngineInterface) {
   const time = await $.clock.now()
   await update($, now, () => time)
@@ -113,8 +183,11 @@ async function tick($: EngineInterface) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
-    const { context, rateLimits } = await $.session.usage()
+    const { context, rateLimits, cost } = await $.session.usage()
+    const picked = await $.store.get('costView')
+    if (picked) await update($, costView, () => picked as CostView)
     await update($, usage, () => ({ context, rateLimits }))
+    await noteCost($, cost, { context, rateLimits })
     await tick($)
     await refreshModel($)
     $.clock.every(MINUTE, () => tick($))
@@ -122,7 +195,9 @@ export const register: Register = on => {
   })
 
   on('session.measure', async ($, e, next) => {
-    await update($, usage, () => ({ context: e.context, rateLimits: e.rateLimits }))
+    const u = { context: e.context, rateLimits: e.rateLimits }
+    await update($, usage, () => u)
+    await noteCost($, e.cost, u)
     return next(e)
   })
 
@@ -153,10 +228,11 @@ export const register: Register = on => {
     const modelId = await read($, model)
     const effortLevel = await read($, effort)
 
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
     const used = u.context.tokens ?? 0
+    const isMetered = billingMode(u, await read($, sessionCost)) === 'metered'
 
-    return (
+    const header = (
       <Box flexDirection="row" width={e.props.bodyColumns} justifyContent="space-between" columnGap={3}>
         {repo ? (
           <Box key="git">
@@ -185,6 +261,72 @@ export const register: Register = on => {
         </Box>
       </Box>
     )
+    if (!isMetered) return header
+
+    const current = await read($, costView)
+    const isOpen = await read($, costOpen)
+    const isInfo = await read($, costInfo)
+    const ledgerNow = await read($, ledger)
+    const spentSession = await read($, sessionCost)
+    const nowMs = await $.clock.now()
+    const label = COST_VIEWS.find(v => v.id === current)!.label
+    const costs = COST_VIEWS.map(v => formatCost(v.id, v.id === 'session' ? spentSession : sumDays(ledgerNow, nowMs, v.days)))
+    const costWidth = Math.max(...costs.map(c => c.length))
+    const labelWidth = Math.max(...COST_VIEWS.map(v => v.label.length))
+    const estimated = current !== 'session'
+    const index = COST_VIEWS.findIndex(v => v.id === current)
+
+    return (
+      <Box flexDirection="column">
+        {header}
+        <Box>
+          <Text dimColor>Cost </Text>
+          <Button key="cost-toggle" label={`${label} ${isOpen ? '▴' : '▾'}`} onPress={() => update($, costOpen, v => !v)} />
+          <Text>
+            {'   '}
+            {costs[index]}
+            {estimated ? ' est.' : ''}
+          </Text>
+          <Box flexGrow={1} />
+          <Button
+            key="cost-info"
+            label={isInfo ? 'ⓘ Hide details' : 'ⓘ How is this estimated?'}
+            onPress={() => update($, costInfo, v => !v)}
+          />
+        </Box>
+        {isInfo && (
+          <Box flexDirection="column" borderStyle="round" paddingX={1}>
+            {COST_EXPLANATION.map((paragraph, i) => (
+              <Box key={i} marginTop={i === 0 ? 0 : 1}>
+                <Text dimColor>{paragraph}</Text>
+              </Box>
+            ))}
+          </Box>
+        )}
+        {isOpen && (
+          <Box flexDirection="column">
+            {COST_VIEWS.map((v, i) => (
+              <Box key={v.id}>
+                <Box width={labelWidth + 8}>
+                  <Button
+                    key={v.id}
+                    label={`${v.id === current ? '●' : '○'} ${v.label}`}
+                    onPress={async () => {
+                      await update($, costView, () => v.id)
+                      await update($, costOpen, () => false)
+                      await $.store.set('costView', v.id)
+                    }}
+                  />
+                </Box>
+                <Box width={costWidth + 1} justifyContent="flex-end">
+                  <Text>{costs[i]}</Text>
+                </Box>
+              </Box>
+            ))}
+          </Box>
+        )}
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
@@ -193,6 +335,20 @@ export const register: Register = on => {
     const nowMs = await read($, now)
 
     const { Box, Text } = $.ui.resolve(e)
+
+    if (billingMode(u, await read($, sessionCost)) === 'metered') {
+      const current = await read($, costView)
+      const view = COST_VIEWS.find(v => v.id === current)!
+      const usd = current === 'session' ? await read($, sessionCost) : sumDays(await read($, ledger), await $.clock.now(), view.days)
+      return (
+        <Box flexDirection="row" flexGrow={1} flexShrink={1} justifyContent="flex-end">
+          <Text dimColor>
+            {view.label} {formatCost(current, usd)}
+            {current === 'session' ? '' : ' est.'}
+          </Text>
+        </Box>
+      )
+    }
 
     const meter = (label: string, kind: string) => {
       const left = percentLeft(kind, u)

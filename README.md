@@ -6,7 +6,7 @@ A collection of Claude Code mods, published as a plugin marketplace.
 
 | Mod | Description |
 | --- | --- |
-| [usage-meter](plugins/usage-meter) | Branch, worktree, model, effort and context above the prompt; 5h and weekly limits below it |
+| [usage-meter](plugins/usage-meter) | Branch, worktree, model, effort and context above the prompt; 5h and weekly limits (subscription) or cost (pay-per-token) below it |
 
 ## Install
 
