@@ -48,7 +48,7 @@ const walk = dir => {
 }
 roots.forEach(walk)
 
-const seen = new Set()
+const seen = new Map()
 const days = {}
 const unpriced = new Set()
 for (const f of files) {
@@ -65,16 +65,25 @@ for (const f of files) {
     const t = Date.parse(o.timestamp)
     if (Number.isNaN(t) || t < cutoff) continue
     const i = u.input_tokens ?? 0, out = u.output_tokens ?? 0
-    const cw = u.cache_creation_input_tokens ?? 0, cr = u.cache_read_input_tokens ?? 0
+    const cr = u.cache_read_input_tokens ?? 0
+    // Writes split by TTL when the log has it (1 h costs 2x, 5 min 1.25x); else all 5 min.
+    const w1 = u.cache_creation?.ephemeral_1h_input_tokens ?? 0
+    const cw = u.cache_creation_input_tokens ?? 0
+    const w5 = Math.max(0, cw - w1)
     if (i + out + cw + cr === 0) continue
     const key = `${o.message.id ?? o.uuid ?? Math.random()}:${o.requestId ?? ''}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    const r = rate(model)
-    if (!r.known) unpriced.add(model)
-    const usd = (i * r.i + out * r.o + cw * r.i * 1.25 + cr * r.i * r.r) / 1e6
-    const k = day(t)
-    days[k] = (days[k] ?? 0) + usd
+    // A response can be logged in several records whose counts grow; keep the largest of each.
+    const prev = seen.get(key)
+    const cur = { t, model, i, out, w5, w1, cr }
+    if (prev) for (const f of ['i', 'out', 'w5', 'w1', 'cr']) cur[f] = Math.max(cur[f], prev[f])
+    seen.set(key, cur)
   }
+}
+for (const c of seen.values()) {
+  const r = rate(c.model)
+  if (!r.known) unpriced.add(c.model)
+  const usd = (c.i * r.i + c.out * r.o + c.w5 * r.i * 1.25 + c.w1 * r.i * 2 + c.cr * r.i * r.r) / 1e6
+  const k = day(c.t)
+  days[k] = (days[k] ?? 0) + usd
 }
 console.log(JSON.stringify({ days, unpriced: [...unpriced] }))

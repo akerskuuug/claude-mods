@@ -49,7 +49,9 @@ export function dayKey(ms: number): string {
 // Sum of the last `days` local days including today.
 export function sumDays(map: Record<string, number>, nowMs: number, days: number): number {
   let total = 0
-  for (let i = 0; i < days; i++) total += map[dayKey(nowMs - i * 86_400_000)] ?? 0
+  const d = new Date(nowMs)
+  // Step by local calendar date: a day is not always 24 h across DST changes.
+  for (let i = 0; i < days; i++, d.setDate(d.getDate() - 1)) total += map[dayKey(d.getTime())] ?? 0
   return total
 }
 
@@ -62,7 +64,7 @@ const COST_EXPLANATION = [
   'You appear to be billed per token, so cost is shown instead of 5-hour and weekly limits.',
   'Session is the exact cost Claude Code reports for this session.',
   "Today, 7 days and 30 days (~) are estimates: this mod scans the local logs in ~/.claude/projects and Cowork sessions, counts each message's token usage once, and prices it at public API list prices per model.",
-  'Discounts, other machines and logs older than 30 days are not reflected, and unrecognised models are priced as Sonnet. Refreshed at most once a minute.',
+  'Discounts, other machines and logs older than 30 days are not reflected, usage billed to a subscription is priced the same way, and unrecognised models are priced as Sonnet. Refreshed at most once a minute.',
 ]
 
 export function formatTokens(n: number): string {
@@ -183,6 +185,9 @@ async function refreshLedger($: EngineInterface) {
 }
 
 async function noteCost($: EngineInterface, cost: { usd: number } | undefined, u: Usage) {
+  // The store is the source of truth: /clear and /resume reset state without a session.start.
+  const picked = await $.store.get('costView')
+  if (picked && picked !== (await read($, costView))) await update($, costView, () => picked as CostView)
   if (cost) await update($, sessionCost, () => cost.usd)
   if (billingMode(u, cost?.usd ?? 0) === 'metered') refreshLedger($).catch(() => {})
 }
@@ -197,8 +202,6 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     const { context, rateLimits, cost } = await $.session.usage()
-    const picked = await $.store.get('costView')
-    if (picked) await update($, costView, () => picked as CostView)
     await update($, usage, () => ({ context, rateLimits }))
     await noteCost($, cost, { context, rateLimits })
     await tick($)

@@ -99,3 +99,12 @@ describe('context bar', () => {
     expect(barFill(75, 20)).toEqual({ filled: ' '.repeat(15), empty: ' '.repeat(5) })
   })
 })
+
+describe('sumDays across DST', () => {
+  test('counts local calendar days, not 24 h steps', async () => {
+    const noon = new Date(2026, 2, 9, 12) // a spring-forward week in many zones
+    const map: Record<string, number> = {}
+    for (let i = 0; i < 7; i++) map[dayKey(new Date(2026, 2, 9 - i, 12).getTime())] = 1
+    expect(sumDays(map, noon.getTime(), 7)).toBe(7)
+  })
+})
