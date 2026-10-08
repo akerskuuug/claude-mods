@@ -1,6 +1,7 @@
 {
   "name": "claude-mods",
   "owner": { "name": "Viktor Åkerskog" },
+  "metadata": { "description": "A collection of Claude Code mods" },
   "plugins": [
     {
       "name": "usage-meter",
