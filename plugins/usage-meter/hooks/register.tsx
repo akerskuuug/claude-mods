@@ -227,74 +227,96 @@ export const register: Register = on => {
     const repo = await read($, git)
     const modelId = await read($, model)
     const effortLevel = await read($, effort)
+    const spentSession = await read($, sessionCost)
+    const isMetered = billingMode(u, spentSession) === 'metered'
 
     const { Box, Button, Text } = $.ui.resolve(e)
-    const used = u.context.tokens ?? 0
-    const isMetered = billingMode(u, await read($, sessionCost)) === 'metered'
 
-    const header = (
-      <Box flexDirection="row" width={e.props.bodyColumns} justifyContent="space-between" columnGap={3}>
-        {repo ? (
-          <Box key="git">
-            {repo.worktree && (
-              <Text color="inverseText" backgroundColor="merged" bold>
-                {` ⎇ worktree: ${shorten(repo.worktree, BRANCH_CHARS)} `}
-              </Text>
-            )}
-            {repo.worktree && <Text> </Text>}
-            <Text color="suggestion">{shorten(repo.branch, BRANCH_CHARS)}</Text>
-            {repo.isDirty && <Text color="warning"> ●</Text>}
+    const meter = (label: string, kind: string, nowMs: number | null) => {
+      const left = percentLeft(kind, u)
+      if (left === null) {
+        return (
+          <Box key={kind}>
+            <Text dimColor>{label} –</Text>
           </Box>
-        ) : (
-          <Text key="git"> </Text>
-        )}
-        <Box key="right" columnGap={3}>
-          {modelId && (
-            <Box key="model">
-              <Text color="claude">{formatModel(modelId)}</Text>
-              {effortLevel && <Text dimColor> · {effortLevel}</Text>}
-            </Box>
-          )}
-          <Text key="context">
-            Context {formatTokens(used)}/{formatTokens(u.context.window)}
+        )
+      }
+      const { filled, empty } = barCells(left, BAR_CELLS)
+      const resetIn = formatResetIn(u.rateLimits.find(r => r.kind === kind)?.resetsAt, nowMs)
+      return (
+        <Box key={kind}>
+          <Text dimColor>{label} </Text>
+          <Text color="inverseText" backgroundColor={barColor(left)} bold>
+            {filled}
           </Text>
+          <Text backgroundColor={TRACK_COLOR}>{empty}</Text>
+          {resetIn && <Text dimColor> · {resetIn}</Text>}
         </Box>
-      </Box>
-    )
-    if (!isMetered) return header
+      )
+    }
 
     const current = await read($, costView)
     const isOpen = await read($, costOpen)
     const isInfo = await read($, costInfo)
     const ledgerNow = await read($, ledger)
-    const spentSession = await read($, sessionCost)
     const nowMs = await $.clock.now()
-    const label = COST_VIEWS.find(v => v.id === current)!.label
     const costs = COST_VIEWS.map(v => formatCost(v.id, v.id === 'session' ? spentSession : sumDays(ledgerNow, nowMs, v.days)))
+    const index = COST_VIEWS.findIndex(v => v.id === current)
+    const estimated = current !== 'session'
+
+    // Subscription (or not yet known): the two limit bars. Metered: the cost control.
+    const limits = isMetered ? (
+      <Box key="cost" columnGap={1}>
+        <Text dimColor>Cost</Text>
+        <Button
+          key="cost-toggle"
+          label={`${COST_VIEWS[index]!.label} ${isOpen ? '▴' : '▾'}`}
+          onPress={() => update($, costOpen, v => !v)}
+        />
+        <Text>
+          {costs[index]}
+          {estimated ? ' est.' : ''}
+        </Text>
+        <Button key="cost-info" label={isInfo ? 'ⓘ Hide' : 'ⓘ'} onPress={() => update($, costInfo, v => !v)} />
+      </Box>
+    ) : (
+      <Box key="limits" columnGap={3}>
+        {meter('5h', 'five_hour', await read($, now))}
+        {meter('Weekly', 'seven_day', await read($, now))}
+      </Box>
+    )
+
     const costWidth = Math.max(...costs.map(c => c.length))
     const labelWidth = Math.max(...COST_VIEWS.map(v => v.label.length))
-    const estimated = current !== 'session'
-    const index = COST_VIEWS.findIndex(v => v.id === current)
 
     return (
       <Box flexDirection="column">
-        {header}
-        <Box>
-          <Text dimColor>Cost </Text>
-          <Button key="cost-toggle" label={`${label} ${isOpen ? '▴' : '▾'}`} onPress={() => update($, costOpen, v => !v)} />
-          <Text>
-            {'   '}
-            {costs[index]}
-            {estimated ? ' est.' : ''}
-          </Text>
-          <Box flexGrow={1} />
-          <Button
-            key="cost-info"
-            label={isInfo ? 'ⓘ Hide details' : 'ⓘ How is this estimated?'}
-            onPress={() => update($, costInfo, v => !v)}
-          />
+        <Box flexDirection="row" width={e.props.bodyColumns} justifyContent="space-between" columnGap={3}>
+          {repo ? (
+            <Box key="git">
+              {repo.worktree && (
+                <Text color="inverseText" backgroundColor="merged" bold>
+                  {` ⎇ worktree: ${shorten(repo.worktree, BRANCH_CHARS)} `}
+                </Text>
+              )}
+              {repo.worktree && <Text> </Text>}
+              <Text color="suggestion">{shorten(repo.branch, BRANCH_CHARS)}</Text>
+              {repo.isDirty && <Text color="warning"> ●</Text>}
+            </Box>
+          ) : (
+            <Text key="git"> </Text>
+          )}
+          <Box key="right" columnGap={3}>
+            {modelId && (
+              <Box key="model">
+                <Text color="claude">{formatModel(modelId)}</Text>
+                {effortLevel && <Text dimColor> · {effortLevel}</Text>}
+              </Box>
+            )}
+            {limits}
+          </Box>
         </Box>
-        {isInfo && (
+        {isMetered && isInfo && (
           <Box flexDirection="column" borderStyle="round" paddingX={1}>
             {COST_EXPLANATION.map((paragraph, i) => (
               <Box key={i} marginTop={i === 0 ? 0 : 1}>
@@ -303,7 +325,7 @@ export const register: Register = on => {
             ))}
           </Box>
         )}
-        {isOpen && (
+        {isMetered && isOpen && (
           <Box flexDirection="column">
             {COST_VIEWS.map((v, i) => (
               <Box key={v.id}>
@@ -332,51 +354,13 @@ export const register: Register = on => {
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     const u = await read($, usage)
     if (!u) return next(e)
-    const nowMs = await read($, now)
-
     const { Box, Text } = $.ui.resolve(e)
 
-    if (billingMode(u, await read($, sessionCost)) === 'metered') {
-      const current = await read($, costView)
-      const view = COST_VIEWS.find(v => v.id === current)!
-      const usd = current === 'session' ? await read($, sessionCost) : sumDays(await read($, ledger), await $.clock.now(), view.days)
-      return (
-        <Box flexDirection="row" flexGrow={1} flexShrink={1} justifyContent="flex-end">
-          <Text dimColor>
-            {view.label} {formatCost(current, usd)}
-            {current === 'session' ? '' : ' est.'}
-          </Text>
-        </Box>
-      )
-    }
-
-    const meter = (label: string, kind: string) => {
-      const left = percentLeft(kind, u)
-      if (left === null) {
-        return (
-          <Box key={kind}>
-            <Text dimColor>{label} –</Text>
-          </Box>
-        )
-      }
-      const { filled, empty } = barCells(left, BAR_CELLS)
-      const resetIn = formatResetIn(u.rateLimits.find(r => r.kind === kind)?.resetsAt, nowMs)
-      return (
-        <Box key={kind}>
-          <Text dimColor>{label} </Text>
-          <Text color="inverseText" backgroundColor={barColor(left)} bold>
-            {filled}
-          </Text>
-          <Text backgroundColor={TRACK_COLOR}>{empty}</Text>
-          {resetIn && <Text dimColor> · {resetIn}</Text>}
-        </Box>
-      )
-    }
-
     return (
-      <Box flexDirection="row" flexGrow={1} flexShrink={1} justifyContent="flex-end" columnGap={3}>
-        {meter('5h', 'five_hour')}
-        {meter('Weekly', 'seven_day')}
+      <Box flexDirection="row" flexGrow={1} flexShrink={1} justifyContent="flex-end">
+        <Text>
+          Context {formatTokens(u.context.tokens ?? 0)}/{formatTokens(u.context.window)}
+        </Text>
       </Box>
     )
   })
