@@ -169,17 +169,23 @@ async function refreshGit($: EngineInterface) {
 }
 
 let lastScan = 0
+let lastDays: Record<string, number> | null = null
 
 // Re-estimates the per-day cost from local logs; throttled to 60 s and only
 // run for metered users. Where a host refuses $.process, the last value stays.
 async function refreshLedger($: EngineInterface) {
   const time = await $.clock.now()
-  if (time - lastScan < MINUTE) return
+  if (time - lastScan < MINUTE) {
+    // /clear, /resume and /branch reset the ledger atom; put the last scan back.
+    if (lastDays && Object.keys(await read($, ledger)).length === 0) await update($, ledger, () => lastDays!)
+    return
+  }
   lastScan = time
   try {
     const run = await $.process.run(['node', `${$.plugin.root}/hooks/scan.mjs`, '30'], { timeoutMs: 60_000 })
     if (run.exitCode !== 0) return
     const { days } = JSON.parse(run.stdout) as { days: Record<string, number> }
+    lastDays = days
     await update($, ledger, () => days)
   } catch {}
 }

@@ -8,7 +8,7 @@ const DAYS = Number(process.argv[2] ?? 30)
 const cutoff = Date.now() - (DAYS + 1) * 86_400_000
 const COWORK = 'local-agent-mode-sessions'
 const roots = [
-  join(homedir(), '.claude/projects'),
+  join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects'),
   join(homedir(), 'Library/Application Support/Claude', COWORK),
 ]
 // Windows Cowork: %APPDATA%\Claude, or the MSIX package's virtualized copy of it.
@@ -29,7 +29,8 @@ const SONNET_55_CUT = Date.UTC(2026, 9, 7)
 // input + cache tokens (Haiku 5.5 has a higher rate card above 100k); `t` is when it ran.
 const rate = (model, prompt, t) => {
   const m = model.toLowerCase()
-  if (m.includes('fable')) return { i: 10, o: 50, r: m.includes('5-1') ? 0.025 : 0.1, known: true }
+  // Mythos shares Fable's rate cards, including 5.1's cache-read discount.
+  if (m.includes('fable') || m.includes('mythos')) return { i: 10, o: 50, r: m.includes('5-1') ? 0.025 : 0.1, known: true }
   if (m.includes('opus')) {
     if (['opus-4-0', 'opus-4-1', 'opus-4-2025', '3-opus'].some(s => m.includes(s))) return { i: 15, o: 75, r: 0.1, known: true }
     return m.includes('opus-5-5') ? { i: 4, o: 20, r: 0.05, known: true } : { i: 5, o: 25, r: 0.1, known: true }
