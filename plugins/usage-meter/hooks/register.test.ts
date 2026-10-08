@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { billingMode, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, parseGitStatus, parseWorktree, percentLeft } from './register'
+import { barFill, billingMode, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, parseGitStatus, parseWorktree, percentLeft } from './register'
 
 describe('usage-meter', () => {
   test('formats tokens like 10k/1M', async () => {
@@ -88,5 +88,14 @@ describe('cost', () => {
   test('marks estimates with ~', async () => {
     expect(formatCost('session', 1.5)).toBe('$1.50')
     expect(formatCost('7d', 1.5)).toBe('~$1.50')
+  })
+})
+
+describe('context bar', () => {
+  test('is the free share of the window, with no text inside', async () => {
+    expect(contextLeft({ context: { window: 1_000_000, tokens: 250_000 }, rateLimits: [] })).toBe(75)
+    expect(contextLeft({ context: { window: 200_000, percent: 40 }, rateLimits: [] })).toBe(60)
+    expect(contextLeft({ context: { window: 0 }, rateLimits: [] })).toBe(100)
+    expect(barFill(75, 20)).toEqual({ filled: ' '.repeat(15), empty: ' '.repeat(5) })
   })
 })

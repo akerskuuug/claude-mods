@@ -16,6 +16,7 @@ const ledger = atom({ plugin: 'usage-meter', key: 'ledger' } as const, {} as Rec
 const sessionCost = atom({ plugin: 'usage-meter', key: 'sessionCost' } as const, 0)
 
 const BAR_CELLS = 10
+const CONTEXT_CELLS = BAR_CELLS * 2
 // Dark-terminal track colour; ThemeKey has no neutral background.
 const TRACK_COLOR = '#3a3a3a'
 const BRANCH_CHARS = 56
@@ -104,6 +105,18 @@ export function barCells(left: number, cells: number): { filled: string; empty: 
   const text = (' '.repeat(start) + label).padEnd(cells).slice(0, cells)
   const filledCount = Math.round((left / 100) * cells)
   return { filled: text.slice(0, filledCount), empty: text.slice(filledCount) }
+}
+
+// Percent of the context window still free, from the tokens in use.
+export function contextLeft(u: Usage): number {
+  const used = u.context.percent ?? (u.context.window > 0 ? ((u.context.tokens ?? 0) / u.context.window) * 100 : 0)
+  return Math.max(0, Math.min(100, Math.round(100 - used)))
+}
+
+// A bar with no text inside: just the filled and empty runs.
+export function barFill(left: number, cells: number): { filled: string; empty: string } {
+  const filledCount = Math.round((left / 100) * cells)
+  return { filled: ' '.repeat(filledCount), empty: ' '.repeat(cells - filledCount) }
 }
 
 export function formatModel(id: string): string {
@@ -356,10 +369,17 @@ export const register: Register = on => {
     if (!u) return next(e)
     const { Box, Text } = $.ui.resolve(e)
 
+    const left = contextLeft(u)
+    const { filled, empty } = barFill(left, CONTEXT_CELLS)
+
     return (
       <Box flexDirection="row" flexGrow={1} flexShrink={1} justifyContent="flex-end">
-        <Text>
-          Context {formatTokens(u.context.tokens ?? 0)}/{formatTokens(u.context.window)}
+        <Text dimColor>Context </Text>
+        <Text backgroundColor={barColor(left)}>{filled}</Text>
+        <Text backgroundColor={TRACK_COLOR}>{empty}</Text>
+        <Text dimColor>
+          {' '}
+          {formatTokens(u.context.tokens ?? 0)}/{formatTokens(u.context.window)}
         </Text>
       </Box>
     )
