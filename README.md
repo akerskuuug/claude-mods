@@ -25,3 +25,7 @@ Then install any mod from it:
 ## Adding a mod
 
 Create `plugins/<name>/` with a `.claude-plugin/plugin.json` and its `hooks/`, then add an entry to `.claude-plugin/marketplace.json`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
