@@ -10,6 +10,18 @@ A collection of Claude Code mods, published as a plugin marketplace.
 
 ## Install
 
+Mods run as function hooks, which Claude Code only loads when they are switched on. Add this to `~/.claude/settings.json` (if the file already exists, merge `env` into it) and restart Claude Code:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"
+  }
+}
+```
+
+Without it a mod installs but shows nothing.
+
 Add the marketplace once:
 
 ```
