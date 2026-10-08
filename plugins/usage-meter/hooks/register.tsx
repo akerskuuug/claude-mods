@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Color, EngineInterface, Register } from 'claude-code'
 
-import type { CostView, GitState, Usage } from '../types'
+import type { CostView, GitState, KnownBilling, Usage } from '../types'
 
 const usage = atom({ plugin: 'usage-meter', key: 'usage' } as const, null)
 const now = atom({ plugin: 'usage-meter', key: 'now' } as const, null)
@@ -14,6 +14,8 @@ const costOpen = atom({ plugin: 'usage-meter', key: 'costOpen' } as const, false
 const costInfo = atom({ plugin: 'usage-meter', key: 'costInfo' } as const, false)
 const ledger = atom({ plugin: 'usage-meter', key: 'ledger' } as const, {} as Record<string, number>)
 const sessionCost = atom({ plugin: 'usage-meter', key: 'sessionCost' } as const, 0)
+const knownBilling = atom({ plugin: 'usage-meter', key: 'knownBilling' } as const, null as KnownBilling | null)
+const dir = atom({ plugin: 'usage-meter', key: 'dir' } as const, null)
 
 const BAR_CELLS = 10
 const CONTEXT_CELLS = BAR_CELLS * 2
@@ -22,7 +24,7 @@ const TRACK_COLOR = '#3a3a3a'
 const BRANCH_CHARS = 56
 const MINUTE = 60_000
 
-export type BillingMode = 'subscription' | 'metered' | 'unknown'
+export type BillingMode = KnownBilling | 'unknown'
 
 // Rate-limit windows only exist on a subscription (Pro/Max/Team/Enterprise
 // seats). With none and a priced response already in, billing is per token.
@@ -30,6 +32,17 @@ export type BillingMode = 'subscription' | 'metered' | 'unknown'
 export function billingMode(u: Usage | null, cost: number): BillingMode {
   if (u?.rateLimits.some(r => r.kind === 'five_hour' || r.kind === 'seven_day')) return 'subscription'
   return u && cost > 0 ? 'metered' : 'unknown'
+}
+
+// The live reading wins; until there is one, the mode last seen (in any
+// session) stands in, so a metered seat does not flash the limit bars.
+export function resolveBilling(live: BillingMode, cached: KnownBilling | null): BillingMode {
+  return live === 'unknown' ? (cached ?? 'unknown') : live
+}
+
+// Last path segment, for either separator; the root stays itself.
+export function baseName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path
 }
 
 export const COST_VIEWS: { id: CostView; label: string; days: number }[] = [
@@ -168,6 +181,11 @@ async function refreshGit($: EngineInterface) {
   }
 }
 
+async function refreshDir($: EngineInterface) {
+  const name = baseName(await $.session.cwd())
+  await update($, dir, () => name)
+}
+
 let lastScan = 0
 let lastDays: Record<string, number> | null = null
 
@@ -195,15 +213,24 @@ async function noteCost($: EngineInterface, cost: { usd: number } | undefined, u
   const picked = await $.store.get('costView')
   if (picked && picked !== (await read($, costView))) await update($, costView, () => picked as CostView)
   if (cost) await update($, sessionCost, () => cost.usd)
-  if (billingMode(u, cost?.usd ?? 0) === 'metered') refreshLedger($).catch(() => {})
+  const live = billingMode(u, await read($, sessionCost))
+  const stored = await $.store.get('billing')
+  const cached = live !== 'unknown' ? live : stored === 'subscription' || stored === 'metered' ? stored : null
+  if (cached !== (await read($, knownBilling))) await update($, knownBilling, () => cached)
+  if (live !== 'unknown' && live !== stored) await $.store.set('billing', live)
+  if (cached === 'metered') refreshLedger($).catch(() => {})
+}
+
+async function currentBilling($: EngineInterface): Promise<BillingMode> {
+  return resolveBilling(billingMode(await read($, usage), await read($, sessionCost)), await read($, knownBilling))
 }
 
 async function tick($: EngineInterface) {
   const time = await $.clock.now()
   await update($, now, () => time)
-  await refreshGit($)
+  await Promise.all([refreshGit($), refreshDir($).catch(() => {})])
   // Other sessions keep writing logs while this one is idle; pick their usage up too.
-  if (billingMode(await read($, usage), await read($, sessionCost)) === 'metered') refreshLedger($).catch(() => {})
+  if ((await currentBilling($)) === 'metered') refreshLedger($).catch(() => {})
 }
 
 export const register: Register = on => {
@@ -228,6 +255,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const result = await next(e)
     refreshGit($).catch(() => {})
+    refreshDir($).catch(() => {})
     return result
   })
 
@@ -249,10 +277,12 @@ export const register: Register = on => {
     const u = await read($, usage)
     if (e.props.hasSurvey || !u) return next(e)
     const repo = await read($, git)
+    const dirName = await read($, dir)
     const modelId = await read($, model)
     const effortLevel = await read($, effort)
     const spentSession = await read($, sessionCost)
-    const isMetered = billingMode(u, spentSession) === 'metered'
+    const mode = await currentBilling($)
+    const isMetered = mode === 'metered'
 
     const { Box, Button, Text } = $.ui.resolve(e)
 
@@ -288,8 +318,8 @@ export const register: Register = on => {
     const index = COST_VIEWS.findIndex(v => v.id === current)
     const estimated = current !== 'session'
 
-    // Subscription (or not yet known): the two limit bars. Metered: the cost control.
-    const limits = isMetered ? (
+    // Subscription: the two limit bars. Metered: the cost control. Unknown: nothing yet.
+    const limits = mode === 'unknown' ? null : isMetered ? (
       <Box key="cost" columnGap={1}>
         <Text dimColor>Cost</Text>
         <Button
@@ -316,16 +346,18 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" width={e.props.bodyColumns} justifyContent="space-between" columnGap={3}>
-          {repo ? (
+          {repo || dirName ? (
             <Box key="git">
-              {repo.worktree && (
+              {repo?.worktree && (
                 <Text color="inverseText" backgroundColor="merged" bold>
                   {` ⎇ worktree: ${shorten(repo.worktree, BRANCH_CHARS)} `}
                 </Text>
               )}
-              {repo.worktree && <Text> </Text>}
-              <Text color="suggestion">{shorten(repo.branch, BRANCH_CHARS)}</Text>
-              {repo.isDirty && <Text color="warning"> ●</Text>}
+              {repo?.worktree && <Text> </Text>}
+              {dirName && <Text>{shorten(dirName, BRANCH_CHARS)}</Text>}
+              {dirName && repo && <Text dimColor> on </Text>}
+              {repo && <Text color="suggestion">{shorten(repo.branch, BRANCH_CHARS)}</Text>}
+              {repo?.isDirty && <Text color="warning"> ●</Text>}
             </Box>
           ) : (
             <Text key="git"> </Text>
@@ -350,7 +382,7 @@ export const register: Register = on => {
           </Box>
         )}
         {isMetered && isOpen && (
-          <Box flexDirection="column">
+          <Box flexDirection="column" alignSelf="flex-end">
             {COST_VIEWS.map((v, i) => (
               <Box key={v.id}>
                 <Box width={labelWidth + 8}>

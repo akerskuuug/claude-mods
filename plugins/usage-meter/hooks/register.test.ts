@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { barFill, billingMode, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, parseGitStatus, parseWorktree, percentLeft } from './register'
+import { barFill, baseName, billingMode, resolveBilling, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, parseGitStatus, parseWorktree, percentLeft } from './register'
 
 describe('usage-meter', () => {
   test('formats tokens like 10k/1M', async () => {
@@ -106,5 +106,25 @@ describe('sumDays across DST', () => {
     const map: Record<string, number> = {}
     for (let i = 0; i < 7; i++) map[dayKey(new Date(2026, 2, 9 - i, 12).getTime())] = 1
     expect(sumDays(map, noon.getTime(), 7)).toBe(7)
+  })
+})
+
+describe('cached billing mode', () => {
+  test('a live reading wins over the cache', async () => {
+    expect(resolveBilling('subscription', 'metered')).toBe('subscription')
+    expect(resolveBilling('metered', null)).toBe('metered')
+  })
+  test('the cache stands in until there is a reading', async () => {
+    expect(resolveBilling('unknown', 'metered')).toBe('metered')
+    expect(resolveBilling('unknown', null)).toBe('unknown')
+  })
+})
+
+describe('directory', () => {
+  test('names the last path segment', async () => {
+    expect(baseName('/home/me/claude-mods')).toBe('claude-mods')
+    expect(baseName('/home/me/claude-mods/')).toBe('claude-mods')
+    expect(baseName('C:\\Users\\me\\repo')).toBe('repo')
+    expect(baseName('/')).toBe('/')
   })
 })
