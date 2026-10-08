@@ -2,14 +2,14 @@
 
 A Claude Code mod that shows, around the prompt:
 
-- **Above:** git branch (with a `●` when dirty and a label when in a worktree) on the left; model and effort on the right, followed by the usage meter:
+- **Above:** the current directory and git branch (with a `●` when dirty and a label when in a worktree) on the left; model and effort on the right, followed by the usage meter:
   - **Subscription:** 5-hour and weekly rate limits as bars with the percent left and time until reset.
-  - **Pay-per-token:** a `Cost` control. Press the period button to switch between Session, Today, 7 days and 30 days; `ⓘ` explains how the estimate works.
+  - **Pay-per-token:** a `Cost` control. Press the period button to switch between Session, Today, 7 days and 30 days (the list opens on the right, below the meter); `ⓘ` explains how the estimate works.
 - **Below:** context as a bar twice as wide as the limit bars (fills as the window is used; green, then yellow, then red as little is left), with used/window beside it.
 
 ## Subscription or metered?
 
-The mod infers billing from what Claude Code reports: rate-limit windows (`five_hour`, `seven_day`) exist only on a subscription. With none, and a priced response already in, billing is treated as metered. Before the first response it can't tell, and shows the limit bars as empty.
+The mod infers billing from what Claude Code reports: rate-limit windows (`five_hour`, `seven_day`) exist only on a subscription. With none, and a priced response already in, billing is treated as metered. Before the first response it can't tell, so it uses the mode it saw last (remembered across sessions); on first use it shows neither until it knows.
 
 ## Cost estimates
 
