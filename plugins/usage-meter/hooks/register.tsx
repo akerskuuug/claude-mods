@@ -202,6 +202,8 @@ async function tick($: EngineInterface) {
   const time = await $.clock.now()
   await update($, now, () => time)
   await refreshGit($)
+  // Other sessions keep writing logs while this one is idle; pick their usage up too.
+  if (billingMode(await read($, usage), await read($, sessionCost)) === 'metered') refreshLedger($).catch(() => {})
 }
 
 export const register: Register = on => {

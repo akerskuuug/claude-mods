@@ -14,7 +14,7 @@ The mod infers billing from what Claude Code reports: rate-limit windows (`five_
 ## Cost estimates
 
 - **Session** is the exact cost Claude Code reports.
-- **Today / 7 days / 30 days** are estimates (marked `~` and `est.`). `hooks/scan.mjs` scans local logs in `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`) and the Cowork sessions folder (macOS and Windows), counts each message once and prices it at public API list prices per model (including fast mode, Haiku 5.5's long-prompt rates and web searches). Discounts, other machines and logs older than 30 days are not reflected; unrecognised models are priced as Sonnet. Refreshed at most once a minute, and only for metered users.
+- **Today / 7 days / 30 days** are estimates (marked `~` and `est.`). `hooks/scan.mjs` scans local logs in `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`) and the Cowork sessions folder (macOS and Windows), counts each message once and prices it at public API list prices per model (including fast mode, US-only inference, server-side compaction, Haiku 5.5's long-prompt rates and web searches). Discounts, other machines and logs older than 30 days are not reflected; unrecognised models are priced as Sonnet. Refreshed at most once a minute, and only for metered users.
 - Requires `node` on the PATH. Per-model prices are hardcoded in `hooks/scan.mjs` and need updating when pricing changes.
 
 ## Install

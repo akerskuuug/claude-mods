@@ -66,6 +66,27 @@ const walk = dir => {
 }
 roots.forEach(walk)
 
+// Token counts of a usage object (top-level or one iteration). Writes split by TTL when
+// the log has it (1 h costs 2x, 5 min 1.25x); else all 5 min.
+const tokens = u => {
+  const w1 = u.cache_creation?.ephemeral_1h_input_tokens ?? 0
+  return {
+    i: u.input_tokens ?? 0,
+    out: u.output_tokens ?? 0,
+    w5: Math.max(0, (u.cache_creation_input_tokens ?? 0) - w1),
+    w1,
+    cr: u.cache_read_input_tokens ?? 0,
+  }
+}
+const NUMERIC = ['i', 'out', 'w5', 'w1', 'cr', 'ws', 'ki', 'kout', 'kw5', 'kw1', 'kcr']
+
+// USD for one sampling step's tokens, before fast-mode and data-residency multipliers.
+const price = (model, t, c) => {
+  const r = rate(model, c.i + c.w5 + c.w1 + c.cr, t)
+  if (!r.known) unpriced.add(model)
+  return (c.i * r.i + c.out * r.o + c.w5 * r.i * 1.25 + c.w1 * r.i * 2 + c.cr * r.i * r.r) / 1e6
+}
+
 const seen = new Map()
 const days = {}
 const unpriced = new Set()
@@ -82,29 +103,34 @@ for (const f of files) {
     if (model === '<synthetic>') continue
     const t = Date.parse(o.timestamp)
     if (Number.isNaN(t) || t < cutoff) continue
-    const i = u.input_tokens ?? 0, out = u.output_tokens ?? 0
-    const cr = u.cache_read_input_tokens ?? 0
-    // Writes split by TTL when the log has it (1 h costs 2x, 5 min 1.25x); else all 5 min.
-    const w1 = u.cache_creation?.ephemeral_1h_input_tokens ?? 0
-    const cw = u.cache_creation_input_tokens ?? 0
-    const w5 = Math.max(0, cw - w1)
+    const { i, out, w5, w1, cr } = tokens(u)
     const ws = u.server_tool_use?.web_search_requests ?? 0
-    if (i + out + w5 + w1 + cr + ws === 0) continue
+    // Server-side compaction is billed but left out of the top-level counts; it is
+    // itemised as `compaction` entries in usage.iterations.
+    const k = (u.iterations ?? []).filter(it => it?.type === 'compaction').map(tokens)
+      .reduce((a, b) => { for (const f in a) a[f] += b[f]; return a }, { i: 0, out: 0, w5: 0, w1: 0, cr: 0 })
+    if (i + out + w5 + w1 + cr + ws + k.i + k.out + k.w5 + k.w1 + k.cr === 0) continue
     const key = `${o.message.id ?? o.uuid ?? Math.random()}:${o.requestId ?? ''}`
     // A response can be logged in several records whose counts grow; keep the largest of each.
     const prev = seen.get(key)
-    const cur = { t, model, fast: u.speed === 'fast' || prev?.fast, i, out, w5, w1, cr, ws }
-    if (prev) for (const f of ['i', 'out', 'w5', 'w1', 'cr', 'ws']) cur[f] = Math.max(cur[f], prev[f])
+    const cur = {
+      t, model, i, out, w5, w1, cr, ws,
+      ki: k.i, kout: k.out, kw5: k.w5, kw1: k.w1, kcr: k.cr,
+      fast: u.speed === 'fast' || prev?.fast,
+      us: u.inference_geo === 'us' || prev?.us,
+    }
+    if (prev) for (const f of NUMERIC) cur[f] = Math.max(cur[f], prev[f])
     seen.set(key, cur)
   }
 }
 for (const c of seen.values()) {
-  const r = rate(c.model, c.i + c.w5 + c.w1 + c.cr, c.t)
-  if (!r.known) unpriced.add(c.model)
-  // Fast mode is 2x the standard token rates on every model that offers it.
-  const x = c.fast ? 2 : 1
+  const tok = price(c.model, c.t, c)
+    + (c.ki + c.kout + c.kw5 + c.kw1 + c.kcr ? price(c.model, c.t, { i: c.ki, out: c.kout, w5: c.kw5, w1: c.kw1, cr: c.kcr }) : 0)
+  // Fast mode is 2x the standard token rates on every model that offers it; US-only
+  // inference (inference_geo "us") is 1.1x on top. Neither touches search fees.
+  const x = (c.fast ? 2 : 1) * (c.us ? 1.1 : 1)
   // Web search is $10 per 1,000 searches on top of tokens.
-  const usd = x * (c.i * r.i + c.out * r.o + c.w5 * r.i * 1.25 + c.w1 * r.i * 2 + c.cr * r.i * r.r) / 1e6 + c.ws * 0.01
+  const usd = x * tok + c.ws * 0.01
   const k = day(c.t)
   days[k] = (days[k] ?? 0) + usd
 }
