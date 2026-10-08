@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { barCells, formatModel, formatResetIn, formatTokens, parseGitStatus, parseWorktree, percentLeft } from './register'
+import { barFill, billingMode, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, parseGitStatus, parseWorktree, percentLeft } from './register'
 
 describe('usage-meter', () => {
   test('formats tokens like 10k/1M', async () => {
@@ -59,5 +59,52 @@ describe('model', () => {
     expect(formatModel('claude-sonnet-5-5[1m]')).toBe('Sonnet 5.5')
     expect(formatModel('claude-fable-5-1')).toBe('Fable 5.1')
     expect(formatModel('Opus 5.5')).toBe('Opus 5.5')
+  })
+})
+
+describe('billing mode', () => {
+  const ctx = { window: 1_000_000 }
+  test('rate-limit windows mean subscription', async () => {
+    expect(billingMode({ context: ctx, rateLimits: [{ kind: 'five_hour', percentUsed: 1 }] }, 0)).toBe('subscription')
+  })
+  test('no windows but a priced response means metered', async () => {
+    expect(billingMode({ context: ctx, rateLimits: [] }, 0.42)).toBe('metered')
+    expect(billingMode({ context: ctx, rateLimits: [{ kind: 'spend_limit', percentUsed: 5 }] }, 0.42)).toBe('metered')
+  })
+  test('nothing read yet is unknown', async () => {
+    expect(billingMode(null, 0)).toBe('unknown')
+    expect(billingMode({ context: ctx, rateLimits: [] }, 0)).toBe('unknown')
+  })
+})
+
+describe('cost', () => {
+  test('sumDays adds the last N local days', async () => {
+    const now = Date.now()
+    const map = { [dayKey(now)]: 1, [dayKey(now - 86_400_000)]: 2, [dayKey(now - 10 * 86_400_000)]: 4 }
+    expect(sumDays(map, now, 1)).toBe(1)
+    expect(sumDays(map, now, 7)).toBe(3)
+    expect(sumDays(map, now, 30)).toBe(7)
+  })
+  test('marks estimates with ~', async () => {
+    expect(formatCost('session', 1.5)).toBe('$1.50')
+    expect(formatCost('7d', 1.5)).toBe('~$1.50')
+  })
+})
+
+describe('context bar', () => {
+  test('is the free share of the window, with no text inside', async () => {
+    expect(contextLeft({ context: { window: 1_000_000, tokens: 250_000 }, rateLimits: [] })).toBe(75)
+    expect(contextLeft({ context: { window: 200_000, percent: 40 }, rateLimits: [] })).toBe(60)
+    expect(contextLeft({ context: { window: 0 }, rateLimits: [] })).toBe(100)
+    expect(barFill(75, 20)).toEqual({ filled: ' '.repeat(15), empty: ' '.repeat(5) })
+  })
+})
+
+describe('sumDays across DST', () => {
+  test('counts local calendar days, not 24 h steps', async () => {
+    const noon = new Date(2026, 2, 9, 12) // a spring-forward week in many zones
+    const map: Record<string, number> = {}
+    for (let i = 0; i < 7; i++) map[dayKey(new Date(2026, 2, 9 - i, 12).getTime())] = 1
+    expect(sumDays(map, noon.getTime(), 7)).toBe(7)
   })
 })

@@ -6,7 +6,7 @@
     {
       "name": "usage-meter",
       "source": "./plugins/usage-meter",
-      "description": "Branch, worktree, model, effort and context above the prompt; 5h and weekly limits below it"
+      "description": "Branch, worktree, model and effort, with 5h and weekly limits (subscription) or cost (pay-per-token), above the prompt; context below it"
     }
   ]
 }
