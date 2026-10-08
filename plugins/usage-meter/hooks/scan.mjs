@@ -29,7 +29,9 @@ const SONNET_55_CUT = Date.UTC(2026, 9, 7)
 // input + cache tokens (Haiku 5.5 has a higher rate card above 100k); `t` is when it ran.
 const rate = (model, prompt, t) => {
   const m = model.toLowerCase()
-  // Mythos shares Fable's rate cards, including 5.1's cache-read discount.
+  // Mythos Preview (Project Glasswing) has its own rate; Mythos 5/5.1 share Fable's
+  // rate cards, including 5.1's cache-read discount.
+  if (m.includes('mythos-preview')) return { i: 25, o: 125, r: 0.1, known: true }
   if (m.includes('fable') || m.includes('mythos')) return { i: 10, o: 50, r: m.includes('5-1') ? 0.025 : 0.1, known: true }
   if (m.includes('opus')) {
     if (['opus-4-0', 'opus-4-1', 'opus-4-2025', '3-opus'].some(s => m.includes(s))) return { i: 15, o: 75, r: 0.1, known: true }
