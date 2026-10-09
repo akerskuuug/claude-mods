@@ -31,8 +31,8 @@ The sun rises at 6:00 and sets at 20:00, local time, crossing the sky between th
 
 ## Where it shows
 
-- The window opens by itself when the terminal is at least 144 columns wide; below that, open it with `/weather`.
-- In the terminal's fullscreen layout it docks beside the transcript. Otherwise it sits above the prompt, up to 8 rows tall.
+- In the terminal's fullscreen layout the window opens by itself, docked beside the transcript, once the terminal is at least 144 columns wide. Narrower, open it with `/weather`.
+- On the main screen (not fullscreen) it never opens by itself. `/weather` opens it above the prompt, up to 8 rows tall.
 - The pixel scene is terminal-only. In the desktop app's Code tab the window shows the caption alone.
 - It animates at 8 frames per second, two pixels per cell (`▀` with separate top and bottom colors).
 

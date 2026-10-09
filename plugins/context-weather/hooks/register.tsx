@@ -6,6 +6,8 @@ import type { DayPhase } from '../types'
 const PANE = 'context-weather'
 const FRAME_MS = 125 // 8 fps: lo-fi on purpose
 const UPPER_HALF = 0x2580 // '▀': foreground paints the top pixel, background the bottom
+// Where heavy rain turns into a thunderstorm: the forecast and the lightning share it.
+const STORM = 0.88
 
 const percent = atom({ plugin: 'context-weather', key: 'percent' } as const, null)
 const phaseNow = atom({ plugin: 'context-weather', key: 'phase' } as const, null)
@@ -24,7 +26,7 @@ export function forecast(pct: number): string {
   if (pct < 45) return 'partly cloudy'
   if (pct < 60) return 'overcast'
   if (pct < 75) return 'light rain'
-  if (pct < 88) return 'heavy rain'
+  if (pct < STORM * 100) return 'heavy rain'
   return 'thunderstorm'
 }
 
@@ -154,7 +156,7 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12)
 
   // Lightning: in some 24-frame windows, a double flicker.
   const win = Math.floor(frame / 24)
-  const strikeChance = s < 0.86 ? 0 : 0.25 + ((s - 0.86) / 0.14) * 0.6
+  const strikeChance = s < STORM ? 0 : 0.25 + ((s - STORM) / (1 - STORM)) * 0.6
   const strikeAt = Math.floor(hash(win * 7 + 1) * 18)
   const inWindow = frame % 24
   const isStrike = hash(win * 7) < strikeChance && (inWindow === strikeAt || inWindow === strikeAt + 2)
@@ -293,7 +295,7 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12)
     const roof = mix(mix(0xb2483b, 0x3a1c1a, s), 0x1a0c0b, (1 - light) * 0.6)
     for (let y = groundY - 4; y < groundY; y++) for (let x = hx; x < hx + 6; x++) px[y * w + x] = wall
     for (let r = 0; r < 3; r++) for (let x = hx - 1 + r; x < hx + 7 - r; x++) px[(groundY - 5 - r) * w + x] = roof
-    const lit = (s > 0.3 || light < 0.7) && !(s > 0.86 && frame % 40 === 0)
+    const lit = (s > 0.3 || light < 0.7) && !(s >= STORM && frame % 40 === 0)
     px[(groundY - 3) * w + hx + 2] = lit ? 0xffcf6b : mix(wall, 0x000000, 0.3)
     px[(groundY - 3) * w + hx + 3] = lit ? 0xffcf6b : mix(wall, 0x000000, 0.3)
   }
@@ -346,6 +348,7 @@ let size: { columns: number; rows: number } | null = null
 let hour = 12 // local time of day the scene shows
 let clockHour = 12 // the real one
 let pinned: number | null = null // a time /weather at set, or null to follow the clock
+let isAutoOpened = false // opened unasked once this load, where it would be a sidebar
 
 async function syncClock($: EngineInterface) {
   let offset: number | null = null
@@ -392,7 +395,6 @@ export const register: Register = on => {
           size = null
         })
     })
-    void $.ui.open({ id: PANE, title: 'Weather', columns: 32 })
     return result
   })
 
@@ -421,6 +423,19 @@ export const register: Register = on => {
     return { text: 'Weather window opened.' }
   })
 
+  // Open unasked only where the pane docks as a sidebar: the terminal's
+  // fullscreen layout. Only a drawing knows that, so the prompt's own sites
+  // look, pass through, and open the pane once.
+  for (const component of ['AbovePrompt', 'PromptHint'] as const) {
+    on('ui.render', { component }, ($, e, next) => {
+      if (!isAutoOpened && e.surface === 'terminal' && e.viewport?.isFullscreen === true) {
+        isAutoOpened = true
+        void $.ui.open({ id: PANE, title: 'Weather', columns: 32 })
+      }
+      return next(e)
+    })
+  }
+
   on('ui.close', { id: PANE }, ($, e, next) => {
     size = null
     return next(e)
@@ -435,8 +450,8 @@ export const register: Register = on => {
     const caption = `${phase === 'day' ? '' : `${phase} · `}${forecast(pct)} · ${pct}% context`
 
     if (e.surface !== 'terminal') {
-      // Raster is terminal-only for now; elsewhere the forecast alone.
-      size = null
+      // Raster is terminal-only for now; elsewhere the forecast alone. The
+      // terminal's mounted Raster, if any, keeps animating.
       const { Text } = $.ui.resolve(e)
       return <Text>{caption}</Text>
     }
