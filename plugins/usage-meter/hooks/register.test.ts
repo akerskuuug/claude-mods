@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'claude-code/testing'
-import { barFill, baseName, billingMode, resolveBilling, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, parseGitStatus, parseWorktree, percentLeft } from './register'
+import { describe, expect, mock, test } from 'claude-code/testing'
+import { barFill, baseName, billingMode, resolveBilling, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, locationLabel, parseGitStatus, parseWorktree, percentLeft } from './register'
 
 describe('usage-meter', () => {
   test('formats tokens like 10k/1M', async () => {
@@ -48,8 +48,24 @@ describe('bar cells', () => {
 
 describe('worktree', () => {
   test('names a linked worktree and ignores the main checkout', async () => {
-    expect(parseWorktree('/r/.git\n/r/.git\n/r\n')).toBe(null)
-    expect(parseWorktree('/r/.git/worktrees/feat\n/r/.git\n/wt/feat-login\n')).toBe('feat-login')
+    expect(parseWorktree('/r/.git\n/r/.git\n/r\n')).toEqual({ worktree: null, root: '/r' })
+    expect(parseWorktree('/r/.git/worktrees/feat\n/r/.git\n/wt/feat-login\n')).toEqual({ worktree: 'feat-login', root: '/wt/feat-login' })
+  })
+})
+
+describe('location label', () => {
+  const wt = { branch: 'main', isDirty: false, worktree: 'feat-login', root: '/wt/feat-login' }
+  test('leaves out a worktree root and keeps a subfolder relative', async () => {
+    expect(locationLabel('/wt/feat-login', wt)).toBe(null)
+    expect(locationLabel('/wt/feat-login/plugins/meter', wt)).toBe('plugins/meter')
+  })
+  test('leaves a directory the branch ends with to the branch', async () => {
+    const repo = { branch: 'feat/issue-538', isDirty: false, worktree: null, root: '/r/issue-538' }
+    expect(locationLabel('/r/issue-538', repo)).toBe(null)
+    expect(locationLabel('/r/other', repo)).toBe('other')
+  })
+  test('names the directory outside git', async () => {
+    expect(locationLabel('/home/me/notes', null)).toBe('notes')
   })
 })
 
@@ -126,5 +142,39 @@ describe('directory', () => {
     expect(baseName('/home/me/claude-mods/')).toBe('claude-mods')
     expect(baseName('C:\\Users\\me\\repo')).toBe('repo')
     expect(baseName('/')).toBe('/')
+  })
+})
+
+describe('worktree toggle', () => {
+  test('shows ⎇ in place of the name and opens the details', async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+    on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [] } }) as never)
+    on('session.model', async () => ({ value: 'claude-opus-5-5' }) as never)
+    on('session.cwd', async () => ({ value: '/wt/issue-538' }) as never)
+    on('process.run', async (_$, e) =>
+      ({
+        value: e.argv.includes('status')
+          ? { exitCode: 0, stdout: '# branch.head feat/issue-538\n', stderr: '' }
+          : { exitCode: 0, stdout: '/r/.git/worktrees/issue-538\n/r/.git\n/wt/issue-538\n', stderr: '' },
+      }) as never,
+    )
+    await $.session.start({ cwd: '/wt/issue-538', surface: 'terminal' } as never)
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const ui = await $.ui.mount({
+        plugin: 'usage-meter',
+        surface,
+        component: 'AbovePrompt',
+        props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120 } as never,
+      })
+      expect(await ui.find({ type: 'Text', text: /issue-538 on/ })).toBeUndefined()
+      expect(await ui.find({ type: 'Text', text: 'feat/issue-538' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Worktree' })).toBeUndefined()
+      await ui.press({ key: 'worktree-toggle' })
+      expect(await ui.find({ type: 'Text', text: 'Worktree' })).toBeDefined()
+      await ui.press({ key: 'worktree-toggle' })
+      await ui.unmount()
+    }
   })
 })
