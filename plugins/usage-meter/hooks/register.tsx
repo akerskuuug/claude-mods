@@ -16,12 +16,12 @@ const ledger = atom({ plugin: 'usage-meter', key: 'ledger' } as const, {} as Rec
 const sessionCost = atom({ plugin: 'usage-meter', key: 'sessionCost' } as const, 0)
 const knownBilling = atom({ plugin: 'usage-meter', key: 'knownBilling' } as const, null as KnownBilling | null)
 const dir = atom({ plugin: 'usage-meter', key: 'dir' } as const, null)
+const worktreeOpen = atom({ plugin: 'usage-meter', key: 'worktreeOpen' } as const, false)
 
 const BAR_CELLS = 10
 const CONTEXT_CELLS = BAR_CELLS * 2
 // Dark-terminal track colour; ThemeKey has no neutral background.
 const TRACK_COLOR = '#3a3a3a'
-const BRANCH_CHARS = 56
 const MINUTE = 60_000
 
 export type BillingMode = KnownBilling | 'unknown'
@@ -103,7 +103,7 @@ export function formatResetIn(resetsAt: string | undefined, nowMs: number | null
   return `${minutes}m`
 }
 
-export function parseGitStatus(porcelainV2: string): Omit<GitState, 'worktree'> | null {
+export function parseGitStatus(porcelainV2: string): Omit<GitState, 'worktree' | 'root'> | null {
   const lines = porcelainV2.split('\n').filter(line => line.length > 0)
   const head = lines.find(line => line.startsWith('# branch.head '))
   if (!head) return null
@@ -148,20 +148,33 @@ async function refreshModel($: EngineInterface) {
   await update($, model, () => name)
 }
 
-function shorten(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text
-}
-
 function barColor(left: number): Color {
   if (left > 50) return 'success'
   if (left > 20) return 'warning'
   return 'error'
 }
 
-export function parseWorktree(revParse: string): string | null {
+export function parseWorktree(revParse: string): { worktree: string | null; root: string | null } {
   const [gitDir, commonDir, topLevel] = revParse.trim().split('\n')
-  if (!gitDir || !commonDir || !topLevel || gitDir === commonDir) return null
-  return topLevel.split('/').pop() ?? topLevel
+  if (!topLevel) return { worktree: null, root: null }
+  const linked = gitDir && commonDir && gitDir !== commonDir
+  return { worktree: linked ? baseName(topLevel) : null, root: topLevel }
+}
+
+// What the git row names, without saying the same thing twice. In a worktree
+// the directory is its root, so only a subfolder (relative) is worth naming;
+// the worktree itself is behind the ⎇ toggle. A directory the branch already
+// ends with (feat/x in x) is left to the branch.
+export function locationLabel(cwd: string | null, repo: GitState | null): string | null {
+  if (!cwd) return null
+  let label: string | null = baseName(cwd)
+  if (repo?.worktree) {
+    const root = repo.root?.replace(/\/+$/, '')
+    if (root && cwd.startsWith(`${root}/`)) label = cwd.slice(root.length + 1).replace(/\/+$/, '') || null
+    else if (root === cwd.replace(/\/+$/, '') || label === repo.worktree) label = null
+  }
+  if (label && repo && (repo.branch === label || repo.branch.endsWith(`/${label}`))) return null
+  return label
 }
 
 async function refreshGit($: EngineInterface) {
@@ -173,8 +186,8 @@ async function refreshGit($: EngineInterface) {
       }),
     ])
     const parsed = status.exitCode === 0 ? parseGitStatus(status.stdout) : null
-    const worktree = paths.exitCode === 0 ? parseWorktree(paths.stdout) : null
-    const state = parsed && { ...parsed, worktree }
+    const where = paths.exitCode === 0 ? parseWorktree(paths.stdout) : { worktree: null, root: null }
+    const state = parsed && { ...parsed, ...where }
     await update($, git, () => state)
   } catch {
     await update($, git, () => null)
@@ -182,7 +195,7 @@ async function refreshGit($: EngineInterface) {
 }
 
 async function refreshDir($: EngineInterface) {
-  const name = baseName(await $.session.cwd())
+  const name = await $.session.cwd()
   await update($, dir, () => name)
 }
 
@@ -277,7 +290,9 @@ export const register: Register = on => {
     const u = await read($, usage)
     if (e.props.hasSurvey || !u) return next(e)
     const repo = await read($, git)
-    const dirName = await read($, dir)
+    const cwd = await read($, dir)
+    const dirName = locationLabel(cwd, repo)
+    const isWorktreeOpen = !!repo?.worktree && (await read($, worktreeOpen))
     const modelId = await read($, model)
     const effortLevel = await read($, effort)
     const spentSession = await read($, sessionCost)
@@ -347,22 +362,25 @@ export const register: Register = on => {
       <Box flexDirection="column">
         <Box flexDirection="row" width={e.props.bodyColumns} justifyContent="space-between" columnGap={3}>
           {repo || dirName ? (
-            <Box key="git">
+            <Box key="git" flexShrink={1} minWidth={0} columnGap={1}>
               {repo?.worktree && (
-                <Text color="inverseText" backgroundColor="merged" bold>
-                  {` ⎇ worktree: ${shorten(repo.worktree, BRANCH_CHARS)} `}
-                </Text>
+                <Button
+                  key="worktree-toggle"
+                  label={isWorktreeOpen ? '⎇ Hide' : '⎇'}
+                  onPress={() => update($, worktreeOpen, v => !v)}
+                />
               )}
-              {repo?.worktree && <Text> </Text>}
-              {dirName && <Text>{shorten(dirName, BRANCH_CHARS)}</Text>}
-              {dirName && repo && <Text dimColor> on </Text>}
-              {repo && <Text color="suggestion">{shorten(repo.branch, BRANCH_CHARS)}</Text>}
-              {repo?.isDirty && <Text color="warning"> ●</Text>}
+              <Text wrap="truncate-end">
+                {dirName && <Text>{dirName}</Text>}
+                {dirName && repo && <Text dimColor> on </Text>}
+                {repo && <Text color="suggestion">{repo.branch}</Text>}
+                {repo?.isDirty && <Text color="warning"> ●</Text>}
+              </Text>
             </Box>
           ) : (
             <Text key="git"> </Text>
           )}
-          <Box key="right" columnGap={3}>
+          <Box key="right" columnGap={3} flexShrink={0}>
             {modelId && (
               <Box key="model">
                 <Text color="claude">{formatModel(modelId)}</Text>
@@ -372,6 +390,22 @@ export const register: Register = on => {
             {limits}
           </Box>
         </Box>
+        {isWorktreeOpen && repo?.worktree && (
+          <Box flexDirection="column" borderStyle="round" paddingX={1}>
+            {[
+              ['Worktree', repo.worktree],
+              ['Directory', cwd ?? ''],
+              ['Branch', repo.branch],
+            ].map(([label, value]) => (
+              <Box key={label}>
+                <Box width={11} flexShrink={0}>
+                  <Text dimColor>{label}</Text>
+                </Box>
+                <Text>{value}</Text>
+              </Box>
+            ))}
+          </Box>
+        )}
         {isMetered && isInfo && (
           <Box flexDirection="column" borderStyle="round" paddingX={1}>
             {COST_EXPLANATION.map((paragraph, i) => (

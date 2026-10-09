@@ -5,7 +5,7 @@ export type Usage = {
 }
 export type CostView = 'session' | 'today' | '7d' | '30d'
 export type KnownBilling = 'subscription' | 'metered'
-export type GitState = { branch: string; isDirty: boolean; worktree: string | null }
+export type GitState = { branch: string; isDirty: boolean; worktree: string | null; root: string | null }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -22,6 +22,7 @@ declare module 'claude-code' {
       sessionCost: number
       knownBilling: KnownBilling | null
       dir: string | null
+      worktreeOpen: boolean
     }
   }
 }

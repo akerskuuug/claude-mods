@@ -2,7 +2,7 @@
 
 A Claude Code mod that shows, around the prompt:
 
-- **Above:** the current directory and git branch (with a `●` when dirty and a label when in a worktree) on the left; model and effort on the right, followed by the usage meter:
+- **Above:** the current directory and git branch (with a `●` when dirty) on the left, cut short with `…` rather than wrapping. In a worktree, a `⎇` button stands in for its name and opens the worktree, directory and branch in full; the directory is named only when you are in a subfolder of it. A directory the branch already ends with (`issue-538` on `feat/issue-538`) is left to the branch. Model and effort are on the right, followed by the usage meter:
   - **Subscription:** 5-hour and weekly rate limits as bars with the percent left and time until reset.
   - **Pay-per-token:** a `Cost` control. Press the period button to switch between Session, Today, 7 days and 30 days (the list opens on the right, below the meter); `ⓘ` explains how the estimate works.
 - **Below:** context as a bar twice as wide as the limit bars (fills as the window is used; green, then yellow, then red as little is left), with used/window beside it.
