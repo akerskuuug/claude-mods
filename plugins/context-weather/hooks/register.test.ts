@@ -97,7 +97,7 @@ describe('review fixes', () => {
     expect(bolt(0.95)).toBe(true)
   })
 
-  test('opens by itself only in the fullscreen terminal', async ($, on) => {
+  test('opens by itself only in a fullscreen terminal 144 columns wide', async ($, on) => {
     mock.clock(on)
     const opened: string[] = []
     on('ui.render', { component: 'AbovePrompt' }, async ($$, e) => {
@@ -108,20 +108,54 @@ describe('review fixes', () => {
       opened.push(e.id)
       return { value: { isPlaced: true } } as never
     })
-    const band = (isFullscreen: boolean) =>
+    const band = (isFullscreen: boolean, columns = 160) =>
       $.ui.mount({
         plugin: 'context-weather',
         surface: 'terminal',
         component: 'AbovePrompt',
         props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 150 } as never,
-        viewport: { columns: 160, rows: 50, isFullscreen },
+        viewport: { columns, rows: 50, isFullscreen },
       } as never)
     const main = await band(false)
     await main.unmount()
     expect(opened).toEqual([])
+    const narrow = await band(true, 120)
+    await narrow.unmount()
+    expect(opened).toEqual([])
     const full = await band(true)
     await full.unmount()
     expect(opened).toEqual(['context-weather'])
+  })
+})
+
+describe('a fresh conversation', () => {
+  test('/clear and a resume show the new context at once', async ($, on) => {
+    mock.clock(on)
+    let tokens = 190_000
+    on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+    on('command.register', async () => ({ value: {} }) as never)
+    on('session.usage', async () => ({ value: { context: { tokens, window: 200_000 }, rateLimits: [] } }) as never)
+    on('classic.SessionStart', async () => ({}) as never)
+    await $.session.start({ cwd: '/', surface: 'terminal' } as never)
+    const shows = async (text: RegExp) => {
+      const ui = await $.ui.mount({
+        plugin: 'context-weather',
+        surface: 'terminal',
+        component: 'Pane',
+        requestId: 'context-weather',
+        props: { title: 'Weather', isFocused: false, bodyColumns: 30, placement: 'dock', scroll: { offset: 0, bodyRows: 20 } } as never,
+      } as never)
+      const found = await ui.find({ type: 'Text', text })
+      await ui.unmount()
+      return found
+    }
+    expect(await shows(/thunderstorm · 95% context$/)).toBeDefined()
+    tokens = 0
+    await $.classic.SessionStart({ source: 'clear' } as never)
+    expect(await shows(/clear skies · 0% context$/)).toBeDefined()
+    tokens = 130_000
+    await $.classic.SessionStart({ source: 'resume' } as never)
+    expect(await shows(/light rain · 65% context$/)).toBeDefined()
   })
 })
 

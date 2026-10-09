@@ -8,6 +8,8 @@ const FRAME_MS = 125 // 8 fps: lo-fi on purpose
 const UPPER_HALF = 0x2580 // '▀': foreground paints the top pixel, background the bottom
 // Where heavy rain turns into a thunderstorm: the forecast and the lightning share it.
 const STORM = 0.88
+// The terminal width from which the pane opens by itself.
+const WIDE = 144
 
 const percent = atom({ plugin: 'context-weather', key: 'percent' } as const, null)
 const phaseNow = atom({ plugin: 'context-weather', key: 'phase' } as const, null)
@@ -367,6 +369,13 @@ async function setPercent($: EngineInterface, pct: number) {
   await update($, percent, () => Math.round(pct))
 }
 
+/** Reads the context afresh and shows its weather at once, with no easing. */
+async function resetWeather($: EngineInterface) {
+  const { context } = await $.session.usage()
+  await setPercent($, contextPercent(context))
+  shown = target
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
@@ -375,9 +384,7 @@ export const register: Register = on => {
       description: 'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock',
       argumentHint: '[at HH:MM|now]',
     })
-    const { context } = await $.session.usage()
-    await setPercent($, contextPercent(context))
-    shown = target
+    await resetWeather($)
     pinned = await read($, override)
     await syncClock($)
     $.clock.every(60_000, () => syncClock($))
@@ -403,6 +410,14 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A /clear or a resume swaps the conversation without a session.start, and
+  // the next measure waits for a turn: show the new conversation's sky now.
+  on('classic.SessionStart', async ($, e, next) => {
+    const result = await next(e)
+    if (e.source === 'clear' || e.source === 'resume') await resetWeather($)
+    return result
+  })
+
   on('command.run', { command: 'weather' }, async ($, e) => {
     const at = /^at\s+(.+)$/.exec(e.args.trim())
     if (at) {
@@ -424,11 +439,11 @@ export const register: Register = on => {
   })
 
   // Open unasked only where the pane docks as a sidebar: the terminal's
-  // fullscreen layout. Only a drawing knows that, so the prompt's own sites
-  // look, pass through, and open the pane once.
+  // fullscreen layout, at least WIDE columns across. Only a drawing knows
+  // that, so the prompt's own sites look, pass through, and open the pane once.
   for (const component of ['AbovePrompt', 'PromptHint'] as const) {
     on('ui.render', { component }, ($, e, next) => {
-      if (!isAutoOpened && e.surface === 'terminal' && e.viewport?.isFullscreen === true) {
+      if (!isAutoOpened && e.surface === 'terminal' && e.viewport?.isFullscreen === true && e.viewport.columns >= WIDE) {
         isAutoOpened = true
         void $.ui.open({ id: PANE, title: 'Weather', columns: 32 })
       }
