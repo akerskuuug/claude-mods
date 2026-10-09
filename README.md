@@ -7,6 +7,7 @@ A collection of Claude Code mods, published as a plugin marketplace.
 | Mod | Description |
 | --- | --- |
 | [usage-meter](plugins/usage-meter) | Directory, branch, worktree, model and effort, with 5h and weekly limits (subscription) or cost (pay-per-token), above the prompt; context below it |
+| [context-weather](plugins/context-weather) | A lo-fi pixel weather window beside the conversation: clear skies with an empty context, a thunderstorm with a full one, day or night by your clock |
 
 ## Install
 

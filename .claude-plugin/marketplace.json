@@ -1,12 +1,21 @@
 {
   "name": "claude-mods",
-  "owner": { "name": "Viktor Åkerskog" },
-  "metadata": { "description": "A collection of Claude Code mods" },
+  "owner": {
+    "name": "Viktor Åkerskog"
+  },
+  "metadata": {
+    "description": "A collection of Claude Code mods"
+  },
   "plugins": [
     {
       "name": "usage-meter",
       "source": "./plugins/usage-meter",
       "description": "Directory, branch, worktree, model and effort, with 5h and weekly limits (subscription) or cost (pay-per-token), above the prompt; context below it"
+    },
+    {
+      "name": "context-weather",
+      "source": "./plugins/context-weather",
+      "description": "A lo-fi pixel weather window whose sky follows the context: clear when it is empty, a thunderstorm when it is full, and day or night by your clock"
     }
   ]
 }

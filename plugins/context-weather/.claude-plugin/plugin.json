@@ -1,0 +1,10 @@
+{
+  "name": "context-weather",
+  "version": "0.1.0",
+  "description": "A lo-fi pixel weather window whose sky follows the context: clear when it is empty, a thunderstorm when it is full, and day or night by your clock",
+  "author": {
+    "name": "Viktor Åkerskog"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}
