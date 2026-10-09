@@ -8,6 +8,8 @@ const FRAME_MS = 125 // 8 fps: lo-fi on purpose
 const UPPER_HALF = 0x2580 // '▀': foreground paints the top pixel, background the bottom
 // Where heavy rain turns into a thunderstorm: the forecast and the lightning share it.
 const STORM = 0.88
+// Where overcast turns into light rain: the forecast and the raindrops share it.
+const RAIN = 0.6
 // The terminal width from which the pane opens by itself.
 const WIDE = 144
 
@@ -26,13 +28,18 @@ export function forecast(pct: number): string {
   if (pct < 10) return 'clear skies'
   if (pct < 25) return 'fair'
   if (pct < 45) return 'partly cloudy'
-  if (pct < 60) return 'overcast'
+  if (pct < RAIN * 100) return 'overcast'
   if (pct < 75) return 'light rain'
   if (pct < STORM * 100) return 'heavy rain'
   return 'thunderstorm'
 }
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n))
+
+/** How hard it rains, 0 to 1: none until light rain, full by 90%. */
+export function rainfall(s: number): number {
+  return clamp01((s - RAIN) / 0.3)
+}
 
 // ---------------------------------------------------------------- the day
 
@@ -261,7 +268,7 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12)
   }
 
   // Rain, slanting with the wind.
-  const rain = clamp01((s - 0.55) / 0.35)
+  const rain = rainfall(s)
   if (rain > 0) {
     const drops = Math.round(w * groundY * 0.05 * rain)
     const color = mix(0x55657f, mix(0x8fa8c8, 0xc8d6ea, s), Math.max(light, flash))
@@ -376,6 +383,12 @@ async function resetWeather($: EngineInterface) {
   shown = target
 }
 
+/** Opens the pane at the person's word; the reply says if it waits undrawn. */
+async function openPane($: EngineInterface, done: string): Promise<{ text: string }> {
+  const opened = await $.ui.open({ id: PANE, title: 'Weather', columns: 32 })
+  return { text: opened.isPlaced ? done : `${done} The window is not shown yet: ${opened.reason}` }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
@@ -411,10 +424,15 @@ export const register: Register = on => {
   })
 
   // A /clear or a resume swaps the conversation without a session.start, and
-  // the next measure waits for a turn: show the new conversation's sky now.
+  // the next measure waits for a turn: show the new conversation's sky and hour now.
   on('classic.SessionStart', async ($, e, next) => {
     const result = await next(e)
-    if (e.source === 'clear' || e.source === 'resume') await resetWeather($)
+    if (e.source === 'clear' || e.source === 'resume') {
+      await resetWeather($)
+      // The new conversation has its own /weather at, and its own phase atom.
+      pinned = await read($, override)
+      await syncClock($)
+    }
     return result
   })
 
@@ -426,16 +444,14 @@ export const register: Register = on => {
       pinned = wanted
       await update($, override, () => wanted)
       await syncClock($)
-      await $.ui.open({ id: PANE, title: 'Weather', columns: 32 })
-      return { text: wanted === null ? 'The weather follows the clock again.' : `The weather shows ${at[1]!.trim()}.` }
+      return openPane($, wanted === null ? 'The weather follows the clock again.' : `The weather shows ${at[1]!.trim()}.`)
     }
     const isOpen = (await $.ui.panes()).some(p => p.id === PANE)
     if (isOpen) {
       await $.ui.close({ id: PANE })
       return { text: 'Weather window closed.' }
     }
-    await $.ui.open({ id: PANE, title: 'Weather', columns: 32 })
-    return { text: 'Weather window opened.' }
+    return openPane($, 'Weather window opened.')
   })
 
   // Open unasked only where the pane docks as a sidebar: the terminal's

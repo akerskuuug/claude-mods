@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { base64, contextPercent, dayPhase, daylight, encode, forecast, localHour, paint, parseClock, parseOffset } from './register'
+import { base64, contextPercent, dayPhase, daylight, encode, forecast, rainfall, localHour, paint, parseClock, parseOffset } from './register'
 
 const decode = (cells: string) => {
   const bin = atob(cells)
@@ -97,6 +97,30 @@ describe('review fixes', () => {
     expect(bolt(0.95)).toBe(true)
   })
 
+  test('no rain until the forecast says light rain', async () => {
+    expect(forecast(59)).toBe('overcast')
+    expect(rainfall(0.59)).toBe(0)
+    expect(forecast(61)).toBe('light rain')
+    expect(rainfall(0.61)).toBeGreaterThan(0)
+  })
+
+  test('/weather says when the window waits undrawn', async ($, on) => {
+    mock.clock(on)
+    on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+    on('command.register', async () => ({ value: {} }) as never)
+    on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [] } }) as never)
+    on('ui.panes', async () => ({ value: [] }) as never)
+    let isPlaced = true
+    on('ui.open', async () => ({ value: isPlaced ? { isPlaced } : { isPlaced, reason: 'needs 110 columns, 80 now' } }) as never)
+    await $.session.start({ cwd: '/', surface: 'terminal' } as never)
+    expect((await $.command.run({ command: 'weather', args: '' })).text).toBe('Weather window opened.')
+    isPlaced = false
+    expect((await $.command.run({ command: 'weather', args: '' })).text).toBe(
+      'Weather window opened. The window is not shown yet: needs 110 columns, 80 now',
+    )
+    expect((await $.command.run({ command: 'weather', args: 'at 22' })).text).toContain('not shown yet')
+  })
+
   test('opens by itself only in a fullscreen terminal 144 columns wide', async ($, on) => {
     mock.clock(on)
     const opened: string[] = []
@@ -156,6 +180,34 @@ describe('a fresh conversation', () => {
     tokens = 130_000
     await $.classic.SessionStart({ source: 'resume' } as never)
     expect(await shows(/light rain · 65% context$/)).toBeDefined()
+  })
+
+  test('/clear reads the clock again at once', async ($, on) => {
+    mock.clock(on, { now: Date.parse('2026-10-09T12:00:00Z') })
+    let offset = '+0000'
+    on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+    on('command.register', async () => ({ value: {} }) as never)
+    on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [] } }) as never)
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: `${offset}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as never)
+    on('classic.SessionStart', async () => ({}) as never)
+    await $.session.start({ cwd: '/', surface: 'terminal' } as never)
+    const caption = async () => {
+      const ui = await $.ui.mount({
+        plugin: 'context-weather',
+        surface: 'desktop',
+        component: 'Pane',
+        requestId: 'context-weather',
+        props: { title: 'Weather', isFocused: false, bodyColumns: 30, placement: 'dock', scroll: { offset: 0, bodyRows: 20 } } as never,
+      } as never)
+      const day = await ui.find({ type: 'Text', text: /^clear skies/ })
+      const night = await ui.find({ type: 'Text', text: /^night · clear skies/ })
+      await ui.unmount()
+      return day ? 'day' : night ? 'night' : 'none'
+    }
+    expect(await caption()).toBe('day')
+    offset = '+1100'
+    await $.classic.SessionStart({ source: 'clear' } as never)
+    expect(await caption()).toBe('night')
   })
 })
 
