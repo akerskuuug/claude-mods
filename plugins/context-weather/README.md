@@ -31,18 +31,19 @@ Every 3 to 8 minutes, at random, someone may pass through, if the weather suits 
 | Weather | Visitor |
 | --- | --- |
 | clear or fair, by day | a few birds flapping across |
-| clear, at night | a shooting star |
-| partly cloudy or overcast | someone flying a kite by the house (by day), or a far-off plane with a blinking beacon |
+| clear or fair, at dawn and dusk | a cat, who climbs to the roof's peak, sits a while and goes on |
+| clear, at night | a shooting star, or an owl on the roof, blinking and looking about |
+| partly cloudy or overcast | someone flying a kite by the house (by day), a far-off plane with a blinking beacon, or at night the owl |
 | rain | someone walking out under an umbrella, which blows inside out in heavy rain and sends them running; or a duck, waddling through |
-| thunderstorm | a cow, tumbling across on the gale |
+| thunderstorm | whatever the gale picked up, tumbling past: a bike, a shed door, the umbrella someone lost, or (one time in four) a cow |
 
-At dawn and dusk under a clear sky nobody comes. A visitor who arrives stays until they are out of sight, even if the weather changes.
+A visitor who arrives stays until they are out of sight, even if the weather changes.
 
 ## Commands
 
 - `/weather` opens or closes the window.
 - `/weather at 22:30` shows that time of day instead of the clock (handy for a preview); `/weather at now` follows the clock again.
-- `/weather visit cow` sends a visitor by now, whatever the weather: `birds`, `star`, `kite`, `plane`, `umbrella`, `duck` or `cow` (plurals work too).
+- `/weather visit cow` sends a visitor by now, whatever the weather: `birds`, `cat`, `star`, `owl`, `kite`, `plane`, `umbrella`, `duck`, `cow`, `bike`, `door` or `lost-umbrella` (plurals and a few other names work too).
 
 ## Where it shows
 
