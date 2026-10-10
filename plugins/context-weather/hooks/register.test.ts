@@ -293,7 +293,11 @@ describe('visitors', () => {
     expect(visitorFor(0.4, 2, 0.2)).toBe('plane')
     expect(visitorFor(0.7, 2, 0.2)).toBe('umbrella')
     expect(visitorFor(0.7, 12, 0.8)).toBe('duck')
-    expect(visitorFor(0.1, 6)).toBe(null)
+    expect(visitorFor(0.1, 6)).toBe('cat')
+    expect(visitorFor(0.1, 20)).toBe('cat')
+    expect(visitorFor(0, 2, 0.8)).toBe('owl')
+    expect(visitorFor(0.4, 2, 0.8)).toBe('owl')
+    expect([0, 0.3, 0.6, 0.9].map(roll => visitorFor(0.95, 12, roll))).toEqual(['cow', 'bike', 'door', 'lost-umbrella'])
   })
 
   test('answer to other names', async () => {
@@ -302,6 +306,8 @@ describe('visitors', () => {
     expect(visitorNamed('shooting-star')).toBe('star')
     expect(visitorNamed('airplane')).toBe('plane')
     expect(visitorNamed('duck')).toBe('duck')
+    expect(visitorNamed('bicycle')).toBe('bike')
+    expect(visitorNamed('brolly')).toBe('lost-umbrella')
     expect(visitorNamed('dragon')).toBe(null)
   })
 
@@ -371,6 +377,33 @@ describe('visitors', () => {
     expect(new Set([...feet(150), ...feet(154)])).toEqual(new Set([groundY - 1]))
   })
 
+  test('the storm blows a bike, a shed door and a lost umbrella past', async () => {
+    for (const [kind, color] of [['bike', 0xd04a3a], ['door', 0x9b6a3f], ['lost-umbrella', 0xc8423a]] as const) {
+      expect(paint(32, 40, 0.95, 120, 12).includes(color)).toBe(false)
+      expect(paint(32, 40, 0.95, 120, 12, visit(kind)).includes(color)).toBe(true)
+      expect(paint(32, 40, 0.95, 100 + visitLength(kind, 32), 12, visit(kind)).includes(color)).toBe(false)
+    }
+  })
+
+  test('a cat sits on the roof a while, then goes', async () => {
+    const eyes = (f: number) => paint(32, 40, 0, f, 20, visit('cat')).includes(0x9be36a)
+    const cat = (f: number) => {
+      const base = paint(32, 40, 0, f, 20)
+      return paint(32, 40, 0, f, 20, visit('cat')).some((c, i) => c !== base[i])
+    }
+    expect(cat(105)).toBe(true)
+    expect(eyes(105)).toBe(false)
+    expect(eyes(200)).toBe(true)
+    expect(cat(100 + visitLength('cat', 32))).toBe(false)
+  })
+
+  test('an owl watches from the roof and blinks', async () => {
+    const eyes = (f: number) => paint(32, 40, 0.4, f, 2, visit('owl')).filter(c => c === 0xffd23a).length
+    expect(eyes(110)).toBe(2)
+    expect(eyes(100 + 48)).toBe(0)
+    expect(eyes(100 + visitLength('owl', 32))).toBe(0)
+  })
+
   test('/weather visit sends one by, and names who can come', async ($, on) => {
     mock.clock(on)
     on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
@@ -381,7 +414,7 @@ describe('visitors', () => {
     expect((await $.command.run({ command: 'weather', args: 'visit cow' })).text).toBe('Here comes a cow.')
     expect((await $.command.run({ command: 'weather', args: 'visit stars' })).text).toBe('Here comes a shooting star.')
     expect((await $.command.run({ command: 'weather', args: 'visit dragon' })).text).toBe(
-      'Nobody called dragon visits. Try birds, star, kite, plane, umbrella, duck, cow.',
+      'Nobody called dragon visits. Try birds, cat, star, owl, kite, plane, umbrella, duck, cow, bike, door, lost-umbrella.',
     )
   })
 })
