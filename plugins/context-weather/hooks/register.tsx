@@ -192,10 +192,11 @@ export function visitLength(kind: VisitorKind, w: number): number {
 // A cow facing right, 8 by 4: White, Black patches, Pink snout, Legs.
 const COW = ['......WW', 'WBWWBWWP', 'WWBWWW..', 'L.L..L.L']
 const COW_COLORS: Record<string, number> = { W: 0xf4f1e8, B: 0x26221f, P: 0xf0a3a8, L: 0x5a4a40 }
-// A duck facing left, 5 by 4: Green head, Orange bill, White body, webbed Feet that step as it waddles.
+// A duck facing left, 5 by 4: Green head, Orange bill, White body with an upturned tail,
+// webbed Feet that step as it waddles. Only the feet change, so the tail holds still.
 const DUCK = [
-  ['.G...', 'OGWWW', '..WWW', '..F.F'],
-  ['.G...', 'OGWWW', '..WWW', '...F.'],
+  ['.G..W', 'OGWWW', '..WWW', '..F.F'],
+  ['.G..W', 'OGWWW', '..WWW', '...F.'],
 ]
 const DUCK_COLORS: Record<string, number> = { G: 0x2f6b3a, O: 0xe8a23a, W: 0xf0ece0, F: 0xd8862a }
 const SKIN = 0xe8b796
