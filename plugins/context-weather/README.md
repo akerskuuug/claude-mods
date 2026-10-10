@@ -24,10 +24,21 @@ Clouds get bigger and drift faster as the context fills, and the rain slants har
 
 The sun rises at 6:00 and sets at 20:00, local time, crossing the sky between them, with half an hour of twilight on either side. Dawn and dusk tint the sky warm. At night a moon crosses the sky and stars twinkle wherever it is clear. The house's window is lit at night and whenever the weather turns gloomy. The time zone is read from `date +%z` once a minute, so daylight saving changes are picked up.
 
+## Visitors
+
+Every 3 to 8 minutes, at random, someone may pass through, if the weather suits them:
+
+- a few birds flapping across a clear or fair sky by day;
+- a shooting star on a clear night;
+- a cow, tumbling across a thunderstorm.
+
+In other weather nobody comes. A visitor who arrives stays until they are out of sight, even if the weather changes.
+
 ## Commands
 
 - `/weather` opens or closes the window.
 - `/weather at 22:30` shows that time of day instead of the clock (handy for a preview); `/weather at now` follows the clock again.
+- `/weather visit cow` (or `birds`, `star`) sends one by now, whatever the weather.
 
 ## Where it shows
 

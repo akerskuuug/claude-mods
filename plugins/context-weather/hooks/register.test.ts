@@ -1,5 +1,20 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { base64, contextPercent, dayPhase, daylight, encode, forecast, rainfall, localHour, paint, parseClock, parseOffset } from './register'
+import {
+  base64,
+  contextPercent,
+  dayPhase,
+  daylight,
+  encode,
+  forecast,
+  localHour,
+  nextGap,
+  paint,
+  parseClock,
+  parseOffset,
+  rainfall,
+  visitLength,
+  visitorFor,
+} from './register'
 
 const decode = (cells: string) => {
   const bin = atob(cells)
@@ -260,5 +275,57 @@ describe('pane', () => {
       if (surface === 'terminal') expect(await ui.find({ key: 'sky' })).toBeDefined()
       await ui.unmount()
     }
+  })
+})
+
+describe('visitors', () => {
+  const visit = (kind: 'birds' | 'star' | 'cow', start = 100) => ({ kind, start, seed: 42 })
+
+  test('come only in their weather', async () => {
+    expect(visitorFor(0.95, 12)).toBe('cow')
+    expect(visitorFor(0.95, 2)).toBe('cow')
+    expect(visitorFor(0, 2)).toBe('star')
+    expect(visitorFor(0.1, 12)).toBe('birds')
+    expect(visitorFor(0.5, 12)).toBe(null)
+    expect(visitorFor(0.7, 2)).toBe(null)
+  })
+
+  test('come every 3 to 8 minutes, at 8 frames a second', async () => {
+    expect(nextGap(0)).toBe(3 * 60 * 8)
+    expect(nextGap(1)).toBe(8 * 60 * 8)
+  })
+
+  test('a cow tumbles across the storm and leaves', async () => {
+    const pink = (px: Uint32Array) => px.includes(0xf0a3a8)
+    expect(pink(paint(32, 40, 0.95, 120, 12))).toBe(false)
+    expect(pink(paint(32, 40, 0.95, 120, 12, visit('cow')))).toBe(true)
+    const gone = 100 + visitLength('cow', 32)
+    expect(pink(paint(32, 40, 0.95, gone, 12, visit('cow')))).toBe(false)
+  })
+
+  test('birds cross a fair sky', async () => {
+    const birds = (px: Uint32Array) => px.filter(c => c === 0x2b2f3a).length
+    expect(birds(paint(32, 40, 0, 160, 12))).toBe(0)
+    expect(birds(paint(32, 40, 0, 160, 12, visit('birds')))).toBeGreaterThanOrEqual(6)
+  })
+
+  test('a shooting star streaks by and fades', async () => {
+    const head = (f: number) => paint(32, 40, 0, f, 2, visit('star')).includes(0xffffff)
+    expect(paint(32, 40, 0, 103, 2).includes(0xffffff)).toBe(false)
+    expect(head(103)).toBe(true)
+    expect(head(100 + visitLength('star', 32))).toBe(false)
+  })
+
+  test('/weather visit sends one by, and names who can come', async ($, on) => {
+    mock.clock(on)
+    on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+    on('command.register', async () => ({ value: {} }) as never)
+    on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [] } }) as never)
+    on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+    await $.session.start({ cwd: '/', surface: 'terminal' } as never)
+    expect((await $.command.run({ command: 'weather', args: 'visit cow' })).text).toBe('Here comes a cow.')
+    expect((await $.command.run({ command: 'weather', args: 'visit dragon' })).text).toBe(
+      'Nobody called dragon visits. Try birds, star, cow.',
+    )
   })
 })
