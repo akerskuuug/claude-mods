@@ -104,6 +104,52 @@ function mix(a: number, b: number, t: number): number {
   return ch(16) | ch(8) | ch(0)
 }
 
+// ---------------------------------------------------------------- visitors
+
+// Now and then something passes through: birds on a fair day, a shooting star
+// on a clear night, a cow blown across a thunderstorm.
+export type VisitorKind = 'birds' | 'star' | 'cow'
+export type Visitor = { kind: VisitorKind; start: number; seed: number }
+
+export const VISITORS: readonly VisitorKind[] = ['birds', 'star', 'cow']
+
+// Between visits: 3 to 8 minutes.
+const GAP_MIN = (3 * 60_000) / FRAME_MS
+const GAP_MAX = (8 * 60_000) / FRAME_MS
+
+// Pixels per frame.
+const BIRD_SPEED = 0.35
+const COW_SPEED = 0.9
+const STAR_FALL = 8 // frames the shooting star moves
+const STAR_FADE = 5 // frames it fades after
+
+/** Frames until the next visit, from a roll of 0..1. */
+export function nextGap(roll: number): number {
+  return Math.round(GAP_MIN + clamp01(roll) * (GAP_MAX - GAP_MIN))
+}
+
+/** Who may visit this sky, or null when nobody would. */
+export function visitorFor(s: number, hour: number): VisitorKind | null {
+  if (s >= STORM) return 'cow'
+  const light = daylight(hour)
+  if (light < 0.3 && s < 0.3) return 'star'
+  if (light > 0.6 && s < 0.25) return 'birds'
+  return null
+}
+
+/** How many frames a visit lasts in a scene `w` pixels wide: until it is out of sight. */
+export function visitLength(kind: VisitorKind, w: number): number {
+  if (kind === 'birds') return Math.ceil((w + 16) / BIRD_SPEED)
+  if (kind === 'cow') return Math.ceil((w + 16) / COW_SPEED)
+  return STAR_FALL + STAR_FADE
+}
+
+// A cow facing right, 8 by 4: White, Black patches, Pink snout, Legs.
+const COW = ['......WW', 'WBWWBWWP', 'WWBWWW..', 'L.L..L.L']
+const COW_COLORS: Record<string, number> = { W: 0xf4f1e8, B: 0x26221f, P: 0xf0a3a8, L: 0x5a4a40 }
+const BIRD = 0x2b2f3a
+const SHOOTING = 0xffffff
+
 // Three anchor palettes; storminess 0..0.5 blends clear→overcast, 0.5..1 overcast→storm.
 type Pal = { top: number; bottom: number; cloud: number; shade: number; ground: number }
 
@@ -154,9 +200,10 @@ const BAYER = [0, 2, 3, 1]
 
 /**
  * One frame of the scene as `w * h` pixels (0xRRGGBB), `s` the storminess 0..1
- * and `hour` the local time of day, 0..24. Pure: the same arguments draw the same frame.
+ * `hour` the local time of day, 0..24, and `visitor` whoever is passing through.
+ * Pure: the same arguments draw the same frame.
  */
-export function paint(w: number, h: number, s: number, frame: number, hour = 12): Uint32Array {
+export function paint(w: number, h: number, s: number, frame: number, hour = 12, visitor: Visitor | null = null): Uint32Array {
   const px = new Uint32Array(w * h)
   const pal = palette(s, hour)
   const light = daylight(hour)
@@ -192,6 +239,23 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12)
       const p = y * w + x
       px[p] = mix(px[p]!, 0xfff6d8, starAlpha * (dim ? 0.35 : 0.9))
     }
+  }
+
+  const dot = (x: number, y: number, color: number, alpha = 1) => {
+    if (x < 0 || y < 0 || x >= w || y >= groundY) return
+    px[y * w + x] = mix(px[y * w + x]!, color, alpha)
+  }
+  const t = visitor ? frame - visitor.start : -1
+
+  // A shooting star streaks down and fades, behind the moon and the clouds.
+  if (visitor?.kind === 'star' && t >= 0 && t < STAR_FALL + STAR_FADE) {
+    const dir = hash(visitor.seed + 2) < 0.5 ? -1 : 1
+    const step = Math.min(t, STAR_FALL)
+    const hx = Math.floor(w * (0.2 + 0.6 * hash(visitor.seed))) + step * 2 * dir
+    const hy = Math.floor(hash(visitor.seed + 1) * groundY * 0.3) + step
+    const fade = t <= STAR_FALL ? 1 : 1 - (t - STAR_FALL) / STAR_FADE
+    for (let j = Math.min(6, step * 2); j >= 1; j--) dot(hx - dir * j, hy - Math.round(j / 2), SHOOTING, (1 - j / 7) * fade * 0.8)
+    dot(hx, hy, SHOOTING, fade)
   }
 
   // Sun and moon ride an arc from the left horizon to the right one.
@@ -285,6 +349,35 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12)
     }
   }
 
+  // A few birds flap across a fair sky, one way or the other.
+  if (visitor?.kind === 'birds' && t >= 0) {
+    const dir = hash(visitor.seed + 2) < 0.5 ? -1 : 1
+    const lead = dir > 0 ? -2 + t * BIRD_SPEED : w + 1 - t * BIRD_SPEED
+    const y0 = 2 + Math.floor(hash(visitor.seed + 1) * groundY * 0.35) + Math.round(Math.sin(t / 10))
+    const flock = hash(visitor.seed + 3) < 0.5 ? 2 : 3
+    for (let i = 0; i < flock; i++) {
+      const bx = Math.round(lead - dir * i * 4)
+      const by = y0 + [0, -2, 2][i]!
+      const isUp = ((t >> 2) + i) % 2 === 0
+      dot(bx, by, BIRD)
+      dot(bx - 1, isUp ? by - 1 : by, BIRD)
+      dot(bx + 1, isUp ? by - 1 : by, BIRD)
+    }
+  }
+
+  // A cow tumbles past on the gale.
+  if (visitor?.kind === 'cow' && t >= 0) {
+    const cx = Math.round(-8 + t * COW_SPEED)
+    const cy = Math.floor(groundY * (0.3 + hash(visitor.seed + 1) * 0.35)) + Math.round(Math.sin(t / 6) * 2)
+    const isFlipped = Math.floor(t / 6) % 2 === 1
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 8; c++) {
+        const ch = isFlipped ? COW[3 - r]![7 - c]! : COW[r]![c]!
+        if (ch !== '.') dot(cx + c, cy + r, mix(COW_COLORS[ch]!, 0x000000, (1 - light) * 0.35))
+      }
+    }
+  }
+
   // The bolt itself.
   if (isStrike) {
     let x = Math.floor(hash(win * 7 + 2) * w * 0.8 + w * 0.1)
@@ -358,6 +451,13 @@ let hour = 12 // local time of day the scene shows
 let clockHour = 12 // the real one
 let pinned: number | null = null // a time /weather at set, or null to follow the clock
 let isAutoOpened = false // opened unasked once this load, where it would be a sidebar
+let visitor: Visitor | null = null // whoever is passing through now
+let visitAt = 0 // the frame the next visit is due
+
+/** Lets someone in now, keeping the weather they arrived in until they are gone. */
+function visit(kind: VisitorKind) {
+  visitor = { kind, start: frame, seed: Math.floor(Math.random() * 0x7fffffff) }
+}
 
 async function syncClock($: EngineInterface) {
   let offset: number | null = null
@@ -394,20 +494,28 @@ export const register: Register = on => {
     const result = await next(e)
     await $.command.register({
       name: 'weather',
-      description: 'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock',
-      argumentHint: '[at HH:MM|now]',
+      description:
+        'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock, "visit cow|birds|star" sends one by',
+      argumentHint: '[at HH:MM|now|visit cow|birds|star]',
     })
     await resetWeather($)
     pinned = await read($, override)
     await syncClock($)
+    visitAt = frame + nextGap(Math.random())
     $.clock.every(60_000, () => syncClock($))
     $.clock.every(FRAME_MS, () => {
       frame += 1
       shown += (target - shown) * 0.04
+      if (visitor && frame - visitor.start >= visitLength(visitor.kind, size?.columns ?? 0)) visitor = null
+      if (!visitor && frame >= visitAt) {
+        const kind = visitorFor(shown, hour)
+        if (kind) visit(kind)
+        visitAt = frame + nextGap(Math.random())
+      }
       if (!size) return
       const { columns, rows } = size
       $.ui
-        .blit({ requestId: PANE, key: 'sky', cells: encode(paint(columns, rows * 2, shown, frame, hour), columns, rows) })
+        .blit({ requestId: PANE, key: 'sky', cells: encode(paint(columns, rows * 2, shown, frame, hour, visitor), columns, rows) })
         .then(r => {
           if ('deny' in r && r.deny) size = null
         })
@@ -445,6 +553,13 @@ export const register: Register = on => {
       await update($, override, () => wanted)
       await syncClock($)
       return openPane($, wanted === null ? 'The weather follows the clock again.' : `The weather shows ${at[1]!.trim()}.`)
+    }
+    const guest = /^visit\s+(\S+)$/.exec(e.args.trim())
+    if (guest) {
+      const kind = VISITORS.find(k => k === guest[1])
+      if (!kind) return { text: `Nobody called ${guest[1]} visits. Try ${VISITORS.join(', ')}.` }
+      visit(kind)
+      return openPane($, kind === 'birds' ? 'Here come some birds.' : `Here comes a ${kind === 'star' ? 'shooting star' : kind}.`)
     }
     const isOpen = (await $.ui.panes()).some(p => p.id === PANE)
     if (isOpen) {
@@ -491,7 +606,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Raster key="sky" columns={columns} rows={rows} cells={encode(paint(columns, rows * 2, shown, frame, hour), columns, rows)} />
+        <Raster key="sky" columns={columns} rows={rows} cells={encode(paint(columns, rows * 2, shown, frame, hour, visitor), columns, rows)} />
         <Text dimColor wrap="truncate">
           {caption}
         </Text>
