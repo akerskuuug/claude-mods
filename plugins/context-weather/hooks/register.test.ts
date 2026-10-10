@@ -293,6 +293,9 @@ describe('visitors', () => {
     expect(visitorFor(0.95, 2)).toBe('cow')
     expect(visitorFor(0, 2)).toBe('star')
     expect(visitorFor(0.1, 12)).toBe('birds')
+    expect(visitorFor(0.24, 2, 0.2)).toBe('star')
+    expect(visitorFor(0.25, 2, 0.2)).toBe('plane')
+    expect(visitorFor(0.29, 2, 0.2)).toBe('plane')
     expect(visitorFor(0.4, 12, 0.2)).toBe('kite')
     expect(visitorFor(0.4, 12, 0.8)).toBe('plane')
     expect(visitorFor(0.4, 2, 0.2)).toBe('plane')
@@ -300,8 +303,12 @@ describe('visitors', () => {
     expect(visitorFor(0.7, 12, 0.8)).toBe('duck')
     expect(visitorFor(0.1, 6)).toBe('cat')
     expect(visitorFor(0.1, 20)).toBe('cat')
+    expect(visitorFor(0.1, 6, 0, false)).toBe('birds')
+    expect(visitorFor(0.1, 20, 0, false)).toBe('birds')
     expect(visitorFor(0, 2, 0.8)).toBe('owl')
+    expect(visitorFor(0, 2, 0.8, false)).toBe('star')
     expect(visitorFor(0.4, 2, 0.8)).toBe('owl')
+    expect(visitorFor(0.4, 2, 0.8, false)).toBe('plane')
     expect([0, 0.3, 0.6, 0.9].map(roll => visitorFor(0.95, 12, roll))).toEqual(['cow', 'bike', 'door', 'lost-umbrella'])
   })
 
@@ -404,6 +411,18 @@ describe('visitors', () => {
     expect(eyes(100 + visitLength('owl', 32))).toBe(0)
   })
 
+  test('roof visitors fall back to the ground when there is no house', async () => {
+    const baseCat = paint(12, 20, 0, 200, 20)
+    const withCat = paint(12, 20, 0, 200, 20, visit('cat'))
+    expect(withCat).not.toEqual(baseCat)
+    expect(withCat.includes(0x9be36a)).toBe(true)
+
+    const baseOwl = paint(12, 20, 0.4, 110, 2)
+    const withOwl = paint(12, 20, 0.4, 110, 2, visit('owl'))
+    expect(withOwl).not.toEqual(baseOwl)
+    expect(withOwl.includes(0xffd23a)).toBe(true)
+  })
+
   test('/weather visit sends one by, and names who can come', async ($, on) => {
     mock.clock(on)
     on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
@@ -416,5 +435,28 @@ describe('visitors', () => {
     expect((await $.command.run({ command: 'weather', args: 'visit dragon' })).text).toBe(
       'Nobody called dragon visits. Try birds, cat, star, owl, kite, plane, umbrella, duck, cow, bike, door, lost-umbrella.',
     )
+  })
+
+  test('preserves visit length while the pane is unmounted', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.parse('2026-10-09T12:00:00Z') })
+    on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+    on('command.register', async () => ({ value: {} }) as never)
+    on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [] } }) as never)
+    on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+    await $.session.start({ cwd: '/', surface: 'terminal' } as never)
+    await $.command.run({ command: 'weather', args: 'visit cow' })
+    await clock.advance(25 * 125)
+    const ui = await $.ui.mount({
+      plugin: 'context-weather',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'context-weather',
+      props: { title: 'Weather', isFocused: false, bodyColumns: 32, placement: 'dock', scroll: { offset: 0, bodyRows: 20 } } as never,
+    } as never)
+    const raster = await ui.find({ key: 'sky' })
+    expect(raster).toBeDefined()
+    const cells = (raster?.props as { cells: string }).cells
+    expect(decode(cells).includes(0xf0a3a8)).toBe(true)
+    await ui.unmount()
   })
 })
