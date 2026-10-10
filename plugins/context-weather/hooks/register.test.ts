@@ -6,6 +6,7 @@ import {
   daylight,
   encode,
   forecast,
+  groundLine,
   localHour,
   nextGap,
   paint,
@@ -17,6 +18,10 @@ import {
   visitorNamed,
 } from './register'
 import type { VisitorKind } from './register'
+
+/** Where `color` shows in a frame `w` pixels wide. */
+const where = (px: Uint32Array, color: number, w: number) =>
+  [...px.keys()].filter(i => px[i] === color).map(i => ({ x: i % w, y: Math.floor(i / w) }))
 
 const decode = (cells: string) => {
   const bin = atob(cells)
@@ -351,8 +356,7 @@ describe('visitors', () => {
 
   test('in heavy rain the umbrella blows inside out and they run', async () => {
     const at = (s: number, f: number) => {
-      const px = paint(40, 40, s, f, 12, visit('umbrella'))
-      const xs = [...px.keys()].filter(i => px[i] === 0xc8423a).map(i => i % 40)
+      const xs = where(paint(40, 40, s, f, 12, visit('umbrella')), 0xc8423a, 40).map(p => p.x)
       return { left: Math.min(...xs), right: Math.max(...xs) }
     }
     const light = at(0.65, 160)
@@ -368,13 +372,9 @@ describe('visitors', () => {
   })
 
   test('the duck stands on its feet, on the ground', async () => {
-    const groundY = 40 - Math.round(40 * 0.12)
-    const feet = (f: number) => {
-      const px = paint(32, 40, 0.7, f, 12, visit('duck'))
-      return [...px.keys()].filter(i => px[i] === 0xd8862a).map(i => Math.floor(i / 32))
-    }
+    const feet = (f: number) => where(paint(32, 40, 0.7, f, 12, visit('duck')), 0xd8862a, 32).map(p => p.y)
     expect(feet(150).length).toBeGreaterThan(0)
-    expect(new Set([...feet(150), ...feet(154)])).toEqual(new Set([groundY - 1]))
+    expect(new Set([...feet(150), ...feet(154)])).toEqual(new Set([groundLine(40) - 1]))
   })
 
   test('the storm blows a bike, a shed door and a lost umbrella past', async () => {

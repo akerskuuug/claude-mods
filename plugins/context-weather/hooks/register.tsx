@@ -106,26 +106,9 @@ function mix(a: number, b: number, t: number): number {
 
 // ---------------------------------------------------------------- visitors
 
-// Now and then something passes through, if the weather suits them: birds on a
-// fair day, a cat on the roof at dawn and dusk, a kite or a far-off plane under
-// cloud, a shooting star or an owl at night, someone with an umbrella or a duck
-// in the rain, and in a thunderstorm whatever the wind picked up.
-export type VisitorKind =
-  | 'birds'
-  | 'cat'
-  | 'star'
-  | 'owl'
-  | 'kite'
-  | 'plane'
-  | 'umbrella'
-  | 'duck'
-  | 'cow'
-  | 'bike'
-  | 'door'
-  | 'lost-umbrella'
-export type Visitor = { kind: VisitorKind; start: number; seed: number }
-
-export const VISITORS: readonly VisitorKind[] = [
+// Now and then someone passes through, if the weather suits them (see visitorFor).
+// Each kind in KINDS says what it is called, how long it stays and how it is drawn.
+export const VISITORS = [
   'birds',
   'cat',
   'star',
@@ -138,38 +121,12 @@ export const VISITORS: readonly VisitorKind[] = [
   'bike',
   'door',
   'lost-umbrella',
-]
+] as const
+export type VisitorKind = (typeof VISITORS)[number]
+export type Visitor = { kind: VisitorKind; start: number; seed: number }
+
 // What the storm blows past; the cow is one in four.
 const STORM_VISITORS: readonly VisitorKind[] = ['cow', 'bike', 'door', 'lost-umbrella']
-
-// Other names /weather visit takes.
-const ALIASES: Record<string, VisitorKind> = {
-  bird: 'birds',
-  stars: 'star',
-  'shooting-star': 'star',
-  shootingstar: 'star',
-  kites: 'kite',
-  planes: 'plane',
-  airplane: 'plane',
-  aeroplane: 'plane',
-  umbrellas: 'umbrella',
-  person: 'umbrella',
-  ducks: 'duck',
-  cows: 'cow',
-  cats: 'cat',
-  owls: 'owl',
-  bikes: 'bike',
-  bicycle: 'bike',
-  doors: 'door',
-  'shed-door': 'door',
-  brolly: 'lost-umbrella',
-}
-
-/** The visitor `/weather visit <name>` means, or null. */
-export function visitorNamed(name: string): VisitorKind | null {
-  const key = name.trim().toLowerCase()
-  return VISITORS.find(k => k === key) ?? ALIASES[key] ?? null
-}
 
 // Between visits: 3 to 8 minutes.
 const GAP_MIN = (3 * 60_000) / FRAME_MS
@@ -199,9 +156,11 @@ export function nextGap(roll: number): number {
   return Math.round(GAP_MIN + clamp01(roll) * (GAP_MAX - GAP_MIN))
 }
 
-/** Who may visit this sky, or null when nobody would; `roll` (0..1) picks where two might. */
-export function visitorFor(s: number, hour: number, roll = 0): VisitorKind | null {
-  if (s >= STORM) return STORM_VISITORS[Math.min(STORM_VISITORS.length - 1, Math.floor(roll * STORM_VISITORS.length))]!
+const pick = <T,>(list: readonly T[], roll: number): T => list[Math.min(list.length - 1, Math.floor(roll * list.length))]!
+
+/** Who visits this sky; `roll` (0..1) picks where several might. */
+export function visitorFor(s: number, hour: number, roll = 0): VisitorKind {
+  if (s >= STORM) return pick(STORM_VISITORS, roll)
   if (s >= RAIN) return roll < 0.5 ? 'umbrella' : 'duck'
   const phase = dayPhase(hour)
   if (s < 0.25 && (phase === 'dawn' || phase === 'dusk')) return 'cat'
@@ -213,29 +172,50 @@ export function visitorFor(s: number, hour: number, roll = 0): VisitorKind | nul
 
 /** How many frames a visit lasts in a scene `w` pixels wide: until it is out of sight. */
 export function visitLength(kind: VisitorKind, w: number): number {
-  const blown = BLOWN[kind]
-  if (blown) return Math.ceil((w + 16) / blown.speed)
-  switch (kind) {
-    case 'birds':
-      return Math.ceil((w + 16) / BIRD_SPEED)
-    case 'cat':
-      return CAT_UP + CAT_SIT + CAT_DOWN
-    case 'owl':
-      return OWL_FRAMES
-    case 'plane':
-      return Math.ceil((w + 40) / PLANE_SPEED)
-    case 'umbrella':
-      return Math.ceil((w + 8) / WALK_SPEED)
-    case 'duck':
-      return Math.ceil((w + 12) / DUCK_SPEED)
-    case 'kite':
-      return KITE_FRAMES
-    case 'star':
-      return STAR_FALL + STAR_FADE
-    default:
-      return 0
-  }
+  return KINDS[kind].length(w)
 }
+
+/** The visitor `/weather visit <name>` means, or null. */
+export function visitorNamed(name: string): VisitorKind | null {
+  const key = name.trim().toLowerCase()
+  return VISITORS.find(k => k === key || KINDS[k].names.includes(key)) ?? null
+}
+
+/** What a visitor draws with: the scene's measures and pens, for one frame. */
+type Scene = {
+  w: number
+  groundY: number
+  s: number
+  light: number
+  frame: number
+  hx: number // the house's left wall
+  door: number // the house's middle: walkers come out from behind it
+  dot(x: number, y: number, color: number, alpha?: number): void
+  /** Rows of letters keyed into `colors`, '.' for clear, shaded for the dark. */
+  sprite(rows: readonly string[], colors: Record<string, number>, x: number, y: number): void
+  shade(color: number): number
+  /** Someone 3 pixels tall standing on the ground at `x`, legs apart mid-stride. */
+  person(x: number, isStriding: boolean): void
+  /** The roof's top edge at `x`. */
+  roofTop(x: number): number
+}
+
+// Where a visitor is drawn: behind the clouds, in front of the rain, or on the house.
+export type Layer = 'sky' | 'air' | 'roof'
+
+type Kind = {
+  arrival: string // what /weather visit answers
+  names: string[] // other names /weather visit takes
+  layer: Layer
+  length(w: number): number
+  /** Draws the visitor `t` frames into its visit. */
+  draw(scene: Scene, t: number, seed: number): void
+}
+
+/** Which way a visitor heads: 1 left to right, -1 right to left. */
+const heading = (seed: number) => (hash(seed + 2) < 0.5 ? -1 : 1)
+/** Where something crossing at `speed` is, `t` frames after it came in from the side `dir` says. */
+const across = (w: number, t: number, speed: number, dir: number) => (dir > 0 ? -2 + t * speed : w + 1 - t * speed)
 
 /** `rows` turned a quarter clockwise `quarters` times. */
 function turn(rows: readonly string[], quarters: number): string[] {
@@ -244,9 +224,51 @@ function turn(rows: readonly string[], quarters: number): string[] {
   return out
 }
 
-// A cow facing right, 8 by 4: White, Black patches, Pink snout, Legs.
-const COW = ['......WW', 'WBWWBWWP', 'WWBWWW..', 'L.L..L.L']
-const COW_COLORS: Record<string, number> = { W: 0xf4f1e8, B: 0x26221f, P: 0xf0a3a8, L: 0x5a4a40 }
+/** Something the gale picked up, tumbling across: `spin` frames per turn of `quarters`. */
+function blown(kind: {
+  arrival: string
+  names: string[]
+  rows: readonly string[]
+  colors: Record<string, number>
+  speed: number
+  spin: number
+  quarters: number
+}): Kind {
+  const turns = [0, 1, 2, 3].map(q => turn(kind.rows, q))
+  return {
+    arrival: kind.arrival,
+    names: kind.names,
+    layer: 'air',
+    length: w => Math.ceil((w + 16) / kind.speed),
+    draw({ groundY, sprite }, t, seed) {
+      const shape = turns[(Math.floor(t / kind.spin) * kind.quarters) % 4]!
+      const cx = Math.round(-8 + t * kind.speed)
+      const cy = Math.floor(groundY * (0.3 + hash(seed + 1) * 0.35)) + Math.round(Math.sin(t / 6) * 2)
+      sprite(shape, kind.colors, cx - (shape[0]!.length >> 1), cy - (shape.length >> 1))
+    },
+  }
+}
+
+const SKIN = 0xe8b796
+const COAT = 0xe0b030
+const BOOTS = 0x3a3f4a
+const SHOOTING = 0xffffff
+// A bird, wings up and level.
+const BIRD_UP = ['B.B', '.B.']
+const BIRD_LEVEL = ['BBB']
+const BIRD_COLORS: Record<string, number> = { B: 0x2b2f3a }
+const FLOCK_DY = [0, -2, 2]
+// A far-off plane and the beacon that blinks on it.
+const PLANE = 0xd8dce4
+const BEACON = 0xff3b30
+// An umbrella over a Handle: open, and blown inside out.
+const UMBRELLA_OPEN = ['.RRR.', 'RRRRR', '..H..']
+const UMBRELLA_BLOWN = ['R...R', '.RRR.', '..H..']
+const UMBRELLA_COLORS: Record<string, number> = { R: 0xc8423a, H: BOOTS }
+// A diamond Kite with a yellow Heart, on a String.
+const KITE = ['.K.', 'KHK', '.K.']
+const KITE_COLORS: Record<string, number> = { K: 0xd8443a, H: 0xf2c94c }
+const STRING = 0xd8d2c0
 // A duck facing left, 5 by 4: Green head, Orange bill, White body with an upturned tail,
 // webbed Feet that step as it waddles. Only the feet change, so the tail holds still.
 const DUCK = [
@@ -254,24 +276,6 @@ const DUCK = [
   ['.G..W', 'OGWWW', '..WWW', '...F.'],
 ]
 const DUCK_COLORS: Record<string, number> = { G: 0x2f6b3a, O: 0xe8a23a, W: 0xf0ece0, F: 0xd8862a }
-// A bike, 7 by 5: Saddle and Handlebar, a red Frame, twO wheels.
-const BIKE = ['.S...H.', '..FFFF.', 'OOOFOOO', 'O.O.O.O', 'OOO.OOO']
-const BIKE_COLORS: Record<string, number> = { S: 0x2a2a2a, H: 0x2a2a2a, F: 0xd04a3a, O: 0x3a3a3a }
-// A shed door, 3 by 6, with a brass Knob.
-const SHED_DOOR = ['DDD', 'DDD', 'DDD', 'DDK', 'DDD', 'DDD']
-const SHED_DOOR_COLORS: Record<string, number> = { D: 0x9b6a3f, K: 0xe8c860 }
-// The umbrella from the rain, 5 by 5, with nobody under it: Red canopy, Handle.
-const LOST_UMBRELLA = ['.RRR.', 'RRRRR', '..H..', '..H..', '.HH..']
-
-// Things the storm blows across, tumbling: `spin` frames per turn, a half turn or a quarter.
-type Blown = { rows: readonly string[]; colors: Record<string, number>; speed: number; spin: number; quarters: number }
-const BLOWN: Partial<Record<VisitorKind, Blown>> = {
-  cow: { rows: COW, colors: COW_COLORS, speed: 0.9, spin: 6, quarters: 2 },
-  bike: { rows: BIKE, colors: BIKE_COLORS, speed: 0.8, spin: 4, quarters: 1 },
-  door: { rows: SHED_DOOR, colors: SHED_DOOR_COLORS, speed: 0.7, spin: 5, quarters: 1 },
-  'lost-umbrella': { rows: LOST_UMBRELLA, colors: { R: 0xc8423a, H: 0x3a3f4a }, speed: 1, spin: 3, quarters: 1 },
-}
-
 // A cat, dark against the twilight: walking right, in two steps, and sitting facing
 // out; its tail and its eyes, which catch the light, are drawn apart.
 const CAT_WALK = [
@@ -285,17 +289,188 @@ const CAT_EYES = 0x9be36a
 const OWL = ['B.B', 'BBB', 'BBB']
 const OWL_COLORS: Record<string, number> = { B: 0x6b5440 }
 const OWL_EYES = 0xffd23a
-const SKIN = 0xe8b796
-const COAT = 0xe0b030
-const BOOTS = 0x3a3f4a
-const UMBRELLA = 0xc8423a
-const KITE = 0xd8443a
-const KITE_HEART = 0xf2c94c
-const STRING = 0xd8d2c0
-const PLANE = 0xd8dce4
-const BEACON = 0xff3b30
-const BIRD = 0x2b2f3a
-const SHOOTING = 0xffffff
+const OWL_LOOKS = [[0, 2], [0, 1], [1, 2]] // eyes ahead, left, right
+
+const KINDS: Record<VisitorKind, Kind> = {
+  // A few birds flap across a fair sky, one way or the other.
+  birds: {
+    arrival: 'Here come some birds.',
+    names: ['bird'],
+    layer: 'air',
+    length: w => Math.ceil((w + 16) / BIRD_SPEED),
+    draw({ w, groundY, sprite }, t, seed) {
+      const dir = heading(seed)
+      const lead = across(w, t, BIRD_SPEED, dir)
+      const y0 = 2 + Math.floor(hash(seed + 1) * groundY * 0.35) + Math.round(Math.sin(t / 10))
+      const flock = hash(seed + 3) < 0.5 ? 2 : 3
+      for (let i = 0; i < flock; i++) {
+        const [bx, by] = [Math.round(lead - dir * i * 4), y0 + FLOCK_DY[i]!]
+        if (((t >> 2) + i) % 2 === 0) sprite(BIRD_UP, BIRD_COLORS, bx - 1, by - 1)
+        else sprite(BIRD_LEVEL, BIRD_COLORS, bx - 1, by)
+      }
+    },
+  },
+
+  // A cat climbs to the roof's peak, sits a while with its tail curling, and goes on.
+  cat: {
+    arrival: 'A cat is out on the roof.',
+    names: ['cats'],
+    layer: 'roof',
+    length: () => CAT_UP + CAT_SIT + CAT_DOWN,
+    draw({ hx, dot, sprite, shade, roofTop }, t) {
+      if (t >= CAT_UP && t < CAT_UP + CAT_SIT) {
+        const [x, peak] = [hx + 1, roofTop(hx + 2)]
+        sprite(CAT_SIT_ROWS, CAT_COLORS, x, peak - 3)
+        if (t % 64 >= 2) for (const dx of [0, 2]) dot(x + dx, peak - 2, CAT_EYES)
+        dot(x + 3, peak - (Math.floor(t / 8) % 2 === 0 ? 1 : 2), shade(CAT_COLORS.K!))
+        return
+      }
+      const cx = Math.round(hx - 1 + (t < CAT_UP ? t : t - CAT_SIT) * CAT_SPEED)
+      if (cx <= hx + 6) sprite(CAT_WALK[Math.floor(t / 3) % 2]!, CAT_COLORS, cx - 2, roofTop(cx) - 3)
+    },
+  },
+
+  // A shooting star streaks down and fades, behind the clouds.
+  star: {
+    arrival: 'Here comes a shooting star.',
+    names: ['stars', 'shooting-star', 'shootingstar'],
+    layer: 'sky',
+    length: () => STAR_FALL + STAR_FADE,
+    draw({ w, groundY, dot }, t, seed) {
+      const dir = heading(seed)
+      const step = Math.min(t, STAR_FALL)
+      const headX = Math.floor(w * (0.2 + 0.6 * hash(seed))) + step * 2 * dir
+      const headY = Math.floor(hash(seed + 1) * groundY * 0.3) + step
+      const fade = t <= STAR_FALL ? 1 : 1 - (t - STAR_FALL) / STAR_FADE
+      for (let j = Math.min(6, step * 2); j >= 1; j--) dot(headX - dir * j, headY - Math.round(j / 2), SHOOTING, (1 - j / 7) * fade * 0.8)
+      dot(headX, headY, SHOOTING, fade)
+    },
+  },
+
+  // An owl keeps watch from the roof's peak, blinking and looking about, then flies off.
+  owl: {
+    arrival: 'An owl lands on the roof.',
+    names: ['owls'],
+    layer: 'roof',
+    length: () => OWL_FRAMES,
+    draw({ hx, dot, sprite, roofTop }, t) {
+      const away = Math.max(0, Math.floor((t - (OWL_FRAMES - OWL_LEAVE)) / 2))
+      const [x, y] = [hx + 1 + away, roofTop(hx + 2) - 3 - away]
+      sprite(OWL, OWL_COLORS, x, y)
+      const isBlinking = t % 48 < 2 || (t % 240 >= 6 && t % 240 < 8)
+      if (isBlinking || away > 0) return
+      for (const dx of OWL_LOOKS[Math.floor(t / 96) % 3]!) dot(x + dx, y + 1, OWL_EYES)
+    },
+  },
+
+  // Someone by the house flies a kite; the wind leans it over, harder the fuller the context.
+  kite: {
+    arrival: 'Someone is out flying a kite.',
+    names: ['kites'],
+    layer: 'air',
+    length: () => KITE_FRAMES,
+    draw({ w, groundY, s, door, dot, sprite, shade, person }, t) {
+      const x = door + 5
+      person(x, false)
+      const reach = Math.min(w * 0.5, groundY * 0.7) * clamp01(Math.min(t, KITE_FRAMES - t) / KITE_REEL)
+      const lean = 0.35 + s * 0.8
+      const [handX, handY] = [x + 1, groundY - 2]
+      const kx = Math.round(handX + Math.sin(lean) * reach + Math.sin(t / 7) * 1.5)
+      const ky = Math.round(handY - Math.cos(lean) * reach + Math.sin(t / 5))
+      const n = Math.max(Math.abs(kx - handX), Math.abs(ky - handY))
+      for (let i = 1; i < n; i += 2) {
+        dot(Math.round(handX + ((kx - handX) * i) / n), Math.round(handY + ((ky - handY) * i) / n), STRING, 0.6)
+      }
+      for (let j = 1; j <= 3; j++) dot(kx + Math.round(j * 0.5 + Math.sin(t / 3 + j) * 0.6), ky + 1 + j, shade(KITE_COLORS.H!))
+      sprite(KITE, KITE_COLORS, kx - 1, ky - 1)
+    },
+  },
+
+  // A plane far off, its beacon blinking and its contrail fading behind it.
+  plane: {
+    arrival: 'Here comes a plane.',
+    names: ['planes', 'airplane', 'aeroplane'],
+    layer: 'sky',
+    length: w => Math.ceil((w + 40) / PLANE_SPEED),
+    draw({ w, groundY, light, frame, dot, shade }, t, seed) {
+      const dir = heading(seed)
+      const x = Math.round(across(w, t, PLANE_SPEED, dir))
+      const y = 1 + Math.floor(hash(seed + 1) * groundY * 0.2)
+      for (let j = 2; j < 30; j++) dot(x - dir * j, y, 0xffffff, (0.15 + 0.35 * light) * (1 - j / 30))
+      dot(x, y, shade(PLANE))
+      dot(x - dir, y, frame % 8 < 4 ? BEACON : shade(PLANE))
+    },
+  },
+
+  // Someone walks out under an umbrella; in heavy rain it blows inside out halfway and they run.
+  umbrella: {
+    arrival: 'Someone is heading out under an umbrella.',
+    names: ['umbrellas', 'person'],
+    layer: 'air',
+    length: w => Math.ceil((w + 8) / WALK_SPEED),
+    draw({ w, groundY, s, door, sprite, person }, t) {
+      const mid = Math.max(door, Math.round(w * 0.55))
+      const flipAt = (mid - door) / WALK_SPEED
+      const isBlown = s >= HEAVY && t >= flipAt
+      const x = Math.round(isBlown ? mid + (t - flipAt) * RUN_SPEED : door + t * WALK_SPEED)
+      person(x, Math.floor(t / (isBlown ? 1 : 2)) % 2 === 1)
+      sprite(isBlown ? UMBRELLA_BLOWN : UMBRELLA_OPEN, UMBRELLA_COLORS, x - 2, groundY - 6)
+    },
+  },
+
+  // A duck waddles through the rain, glad of it.
+  duck: {
+    arrival: 'Here comes a duck.',
+    names: ['ducks'],
+    layer: 'air',
+    length: w => Math.ceil((w + 12) / DUCK_SPEED),
+    draw({ w, groundY, sprite }, t) {
+      sprite(DUCK[Math.floor(t / 4) % 2]!, DUCK_COLORS, Math.round(across(w, t, DUCK_SPEED, -1)), groundY - 4)
+    },
+  },
+
+  // Whatever the gale picked up tumbles past.
+  cow: blown({
+    arrival: 'Here comes a cow.',
+    names: ['cows'],
+    // Facing right, 8 by 4: White, Black patches, Pink snout, Legs.
+    rows: ['......WW', 'WBWWBWWP', 'WWBWWW..', 'L.L..L.L'],
+    colors: { W: 0xf4f1e8, B: 0x26221f, P: 0xf0a3a8, L: 0x5a4a40 },
+    speed: 0.9,
+    spin: 6,
+    quarters: 2,
+  }),
+  bike: blown({
+    arrival: 'Is that a bike?',
+    names: ['bikes', 'bicycle'],
+    // 7 by 5: blacK saddle and handlebar, a red Frame, twO wheels.
+    rows: ['.K...K.', '..FFFF.', 'OOOFOOO', 'O.O.O.O', 'OOO.OOO'],
+    colors: { K: 0x2a2a2a, F: 0xd04a3a, O: 0x3a3a3a },
+    speed: 0.8,
+    spin: 4,
+    quarters: 1,
+  }),
+  door: blown({
+    arrival: 'There goes a shed door.',
+    names: ['doors', 'shed-door'],
+    // 3 by 6, with a brass Knob.
+    rows: ['DDD', 'DDD', 'DDD', 'DDK', 'DDD', 'DDD'],
+    colors: { D: 0x9b6a3f, K: 0xe8c860 },
+    speed: 0.7,
+    spin: 5,
+    quarters: 1,
+  }),
+  'lost-umbrella': blown({
+    arrival: 'An umbrella blows past. Someone will miss that.',
+    names: ['brolly'],
+    // The umbrella from the rain, 5 by 5, with nobody under it.
+    rows: ['.RRR.', 'RRRRR', '..H..', '..H..', '.HH..'],
+    colors: UMBRELLA_COLORS,
+    speed: 1,
+    spin: 3,
+    quarters: 1,
+  }),
+}
 
 // Three anchor palettes; storminess 0..0.5 blends clear→overcast, 0.5..1 overcast→storm.
 type Pal = { top: number; bottom: number; cloud: number; shade: number; ground: number }
@@ -345,6 +520,11 @@ function palette(s: number, hour: number): Pal {
 
 const BAYER = [0, 2, 3, 1]
 
+/** The row the ground starts on, in a scene `h` pixels tall. */
+export function groundLine(h: number): number {
+  return h - Math.max(2, Math.round(h * 0.12))
+}
+
 /**
  * One frame of the scene as `w * h` pixels (0xRRGGBB), `s` the storminess 0..1
  * `hour` the local time of day, 0..24, and `visitor` whoever is passing through.
@@ -355,7 +535,7 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
   const pal = palette(s, hour)
   const light = daylight(hour)
   const wind = 0.08 + s * 0.7
-  const groundY = h - Math.max(2, Math.round(h * 0.12))
+  const groundY = groundLine(h)
 
   // Lightning: in some 24-frame windows, a double flicker.
   const win = Math.floor(frame / 24)
@@ -388,42 +568,42 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
     }
   }
 
-  const dot = (x: number, y: number, color: number, alpha = 1) => {
-    if (x < 0 || y < 0 || x >= w || y >= groundY) return
-    px[y * w + x] = mix(px[y * w + x]!, color, alpha)
-  }
-  const t = visitor ? frame - visitor.start : -1
-  const shade = (color: number) => mix(color, 0x000000, (1 - light) * 0.35)
-  const sprite = (rows: readonly string[], colors: Record<string, number>, x: number, y: number) => {
-    for (let r = 0; r < rows.length; r++) {
-      for (let c = 0; c < rows[r]!.length; c++) {
-        const ch = rows[r]![c]!
-        if (ch !== '.') dot(x + c, y + r, shade(colors[ch]!))
-      }
-    }
-  }
-  // Someone 3 pixels tall standing on the ground at `x`, legs apart mid-stride.
-  const person = (x: number, isStriding: boolean) => {
-    dot(x, groundY - 3, shade(SKIN))
-    dot(x, groundY - 2, shade(COAT))
-    if (isStriding) {
-      dot(x - 1, groundY - 1, shade(BOOTS))
-      dot(x + 1, groundY - 1, shade(BOOTS))
-    } else dot(x, groundY - 1, shade(BOOTS))
-  }
+  // Whoever is visiting, drawn in turn at its layer.
   const hasHouse = w >= 16 && groundY >= 8
-  const hx = Math.round(w * 0.18) // the house's left wall
-  const door = hx + 3 // the house's middle: walkers come out from behind it
-
-  // A shooting star streaks down and fades, behind the moon and the clouds.
-  if (visitor?.kind === 'star' && t >= 0 && t < STAR_FALL + STAR_FADE) {
-    const dir = hash(visitor.seed + 2) < 0.5 ? -1 : 1
-    const step = Math.min(t, STAR_FALL)
-    const headX = Math.floor(w * (0.2 + 0.6 * hash(visitor.seed))) + step * 2 * dir
-    const headY = Math.floor(hash(visitor.seed + 1) * groundY * 0.3) + step
-    const fade = t <= STAR_FALL ? 1 : 1 - (t - STAR_FALL) / STAR_FADE
-    for (let j = Math.min(6, step * 2); j >= 1; j--) dot(headX - dir * j, headY - Math.round(j / 2), SHOOTING, (1 - j / 7) * fade * 0.8)
-    dot(headX, headY, SHOOTING, fade)
+  const hx = Math.round(w * 0.18)
+  const roofTop = (x: number) => groundY - 7 + Math.max(0, hx + 1 - x, x - (hx + 4)) // a three-step gable
+  const t = visitor ? frame - visitor.start : -1
+  const guest = visitor && t >= 0 && t < visitLength(visitor.kind, w) ? KINDS[visitor.kind] : null
+  const scene: Scene = {
+    w,
+    groundY,
+    s,
+    light,
+    frame,
+    hx,
+    door: hx + 3,
+    roofTop,
+    dot(x, y, color, alpha = 1) {
+      if (x < 0 || y < 0 || x >= w || y >= groundY) return
+      px[y * w + x] = mix(px[y * w + x]!, color, alpha)
+    },
+    shade: color => mix(color, 0x000000, (1 - light) * 0.35),
+    sprite(rows, colors, x, y) {
+      for (let r = 0; r < rows.length; r++) {
+        for (let c = 0; c < rows[r]!.length; c++) {
+          const ch = rows[r]![c]!
+          if (ch !== '.') scene.dot(x + c, y + r, scene.shade(colors[ch]!))
+        }
+      }
+    },
+    person(x, isStriding) {
+      scene.dot(x, groundY - 3, scene.shade(SKIN))
+      scene.dot(x, groundY - 2, scene.shade(COAT))
+      for (const dx of isStriding ? [-1, 1] : [0]) scene.dot(x + dx, groundY - 1, scene.shade(BOOTS))
+    },
+  }
+  const drawVisitor = (layer: Layer) => {
+    if (guest?.layer === layer && (layer !== 'roof' || hasHouse)) guest.draw(scene, t, visitor!.seed)
   }
 
   // Sun and moon ride an arc from the left horizon to the right one.
@@ -465,15 +645,7 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
     disc(cx, cy, 0xe9e4c8, moonAlpha, { dx: Math.ceil(r * 0.7), dy: -Math.ceil(r * 0.4) })
   }
 
-  // A plane far off, its beacon blinking and its contrail fading behind it.
-  if (visitor?.kind === 'plane' && t >= 0) {
-    const dir = hash(visitor.seed + 2) < 0.5 ? -1 : 1
-    const x = Math.round(dir > 0 ? -2 + t * PLANE_SPEED : w + 1 - t * PLANE_SPEED)
-    const y = 1 + Math.floor(hash(visitor.seed + 1) * groundY * 0.2)
-    for (let j = 2; j < 30; j++) dot(x - dir * j, y, 0xffffff, (0.15 + 0.35 * light) * (1 - j / 30))
-    dot(x, y, shade(PLANE))
-    dot(x - dir, y, frame % 8 < 4 ? BEACON : shade(PLANE))
-  }
+  drawVisitor('sky')
 
   // Overcast ceiling with a wavy lower edge.
   const ceiling = clamp01((s - 0.45) * 2.2) * groundY * 0.3
@@ -527,72 +699,7 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
     }
   }
 
-  // A few birds flap across a fair sky, one way or the other.
-  if (visitor?.kind === 'birds' && t >= 0) {
-    const dir = hash(visitor.seed + 2) < 0.5 ? -1 : 1
-    const lead = dir > 0 ? -2 + t * BIRD_SPEED : w + 1 - t * BIRD_SPEED
-    const y0 = 2 + Math.floor(hash(visitor.seed + 1) * groundY * 0.35) + Math.round(Math.sin(t / 10))
-    const flock = hash(visitor.seed + 3) < 0.5 ? 2 : 3
-    for (let i = 0; i < flock; i++) {
-      const bx = Math.round(lead - dir * i * 4)
-      const by = y0 + [0, -2, 2][i]!
-      const isUp = ((t >> 2) + i) % 2 === 0
-      dot(bx, by, BIRD)
-      dot(bx - 1, isUp ? by - 1 : by, BIRD)
-      dot(bx + 1, isUp ? by - 1 : by, BIRD)
-    }
-  }
-
-  // Whatever the gale picked up tumbles past: a cow, a bike, a shed door, someone's umbrella.
-  const blown = visitor && BLOWN[visitor.kind]
-  if (visitor && blown && t >= 0) {
-    const shape = turn(blown.rows, Math.floor(t / blown.spin) * blown.quarters)
-    const cx = Math.round(-8 + t * blown.speed)
-    const cy = Math.floor(groundY * (0.3 + hash(visitor.seed + 1) * 0.35)) + Math.round(Math.sin(t / 6) * 2)
-    sprite(shape, blown.colors, cx - (shape[0]!.length >> 1), cy - (shape.length >> 1))
-  }
-
-  // Someone walks out under an umbrella; in heavy rain it blows inside out halfway and they run.
-  if (visitor?.kind === 'umbrella' && t >= 0) {
-    const mid = Math.max(door, Math.round(w * 0.55))
-    const flipAt = (mid - door) / WALK_SPEED
-    const isBlown = s >= HEAVY && t >= flipAt
-    const x = Math.round(isBlown ? mid + (t - flipAt) * RUN_SPEED : door + t * WALK_SPEED)
-    person(x, Math.floor(t / (isBlown ? 1 : 2)) % 2 === 1)
-    const red = shade(UMBRELLA)
-    dot(x, groundY - 4, shade(BOOTS))
-    if (isBlown) {
-      dot(x - 2, groundY - 6, red)
-      dot(x + 2, groundY - 6, red)
-      for (let dx = -1; dx <= 1; dx++) dot(x + dx, groundY - 5, red)
-    } else {
-      for (let dx = -2; dx <= 2; dx++) dot(x + dx, groundY - 5, red)
-      for (let dx = -1; dx <= 1; dx++) dot(x + dx, groundY - 6, red)
-    }
-  }
-
-  // A duck waddles through the rain, glad of it.
-  if (visitor?.kind === 'duck' && t >= 0) {
-    sprite(DUCK[Math.floor(t / 4) % 2]!, DUCK_COLORS, Math.round(w + 1 - t * DUCK_SPEED), groundY - 4)
-  }
-
-  // Someone by the house flies a kite; the wind leans it over, harder the fuller the context.
-  if (visitor?.kind === 'kite' && t >= 0 && t < KITE_FRAMES) {
-    const x = door + 5
-    person(x, false)
-    const reach = Math.min(w * 0.5, groundY * 0.7) * clamp01(Math.min(t, KITE_FRAMES - t) / KITE_REEL)
-    const lean = 0.35 + s * 0.8
-    const [handX, handY] = [x + 1, groundY - 2]
-    const kx = Math.round(handX + Math.sin(lean) * reach + Math.sin(t / 7) * 1.5)
-    const ky = Math.round(handY - Math.cos(lean) * reach + Math.sin(t / 5))
-    const n = Math.max(Math.abs(kx - handX), Math.abs(ky - handY))
-    for (let i = 1; i < n; i += 2) {
-      dot(Math.round(handX + ((kx - handX) * i) / n), Math.round(handY + ((ky - handY) * i) / n), STRING, 0.6)
-    }
-    for (let j = 1; j <= 3; j++) dot(kx + Math.round(j * 0.5 + Math.sin(t / 3 + j) * 0.6), ky + 1 + j, shade(KITE_HEART))
-    for (const [dx, dy] of [[0, -1], [-1, 0], [1, 0], [0, 1]] as const) dot(kx + dx, ky + dy, shade(KITE))
-    dot(kx, ky, shade(KITE_HEART))
-  }
+  drawVisitor('air')
 
   // The bolt itself.
   if (isStrike) {
@@ -611,40 +718,13 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
     const wall = mix(mix(0x8a5a44, 0x2a1d18, s), 0x140e0c, (1 - light) * 0.6)
     const roof = mix(mix(0xb2483b, 0x3a1c1a, s), 0x1a0c0b, (1 - light) * 0.6)
     for (let y = groundY - 4; y < groundY; y++) for (let x = hx; x < hx + 6; x++) px[y * w + x] = wall
-    for (let r = 0; r < 3; r++) for (let x = hx - 1 + r; x < hx + 7 - r; x++) px[(groundY - 5 - r) * w + x] = roof
+    for (let x = hx - 1; x <= hx + 6; x++) for (let y = roofTop(x); y <= groundY - 5; y++) px[y * w + x] = roof
     const lit = (s > 0.3 || light < 0.7) && !(s >= STORM && frame % 40 === 0)
     px[(groundY - 3) * w + hx + 2] = lit ? 0xffcf6b : mix(wall, 0x000000, 0.3)
     px[(groundY - 3) * w + hx + 3] = lit ? 0xffcf6b : mix(wall, 0x000000, 0.3)
   }
 
-  // The roof's top edge at `x`: a three-step gable from the eaves (hx - 1, hx + 6) to the peak.
-  const roofTop = (x: number) => groundY - 7 + Math.max(0, hx + 1 - x, x - (hx + 4))
-
-  // A cat climbs to the roof's peak, sits a while with its tail curling, and goes on.
-  if (visitor?.kind === 'cat' && hasHouse && t >= 0) {
-    if (t >= CAT_UP && t < CAT_UP + CAT_SIT) {
-      const x = hx + 1
-      sprite(CAT_SIT_ROWS, CAT_COLORS, x, roofTop(hx + 2) - 3)
-      if (t % 64 >= 2) for (const dx of [0, 2]) dot(x + dx, roofTop(hx + 2) - 2, CAT_EYES)
-      dot(x + 3, roofTop(hx + 2) - (Math.floor(t / 8) % 2 === 0 ? 1 : 2), shade(CAT_COLORS.K!))
-    } else {
-      const walked = t < CAT_UP ? t : t - CAT_SIT
-      const cx = Math.round(hx - 1 + walked * CAT_SPEED)
-      if (cx <= hx + 6) sprite(CAT_WALK[Math.floor(t / 3) % 2]!, CAT_COLORS, cx - 2, roofTop(cx) - 3)
-    }
-  }
-
-  // An owl keeps watch from the roof's peak, blinking and looking about, then flies off.
-  if (visitor?.kind === 'owl' && hasHouse && t >= 0 && t < OWL_FRAMES) {
-    const away = Math.max(0, Math.floor((t - (OWL_FRAMES - OWL_LEAVE)) / 2))
-    const [x, y] = [hx + 1 + away, roofTop(hx + 2) - 3 - away]
-    sprite(OWL, OWL_COLORS, x, y)
-    const look = Math.floor(t / 96) % 3 // ahead, left, right
-    const isBlinking = t % 48 < 2 || (t % 240 >= 6 && t % 240 < 8)
-    if (!isBlinking && away === 0) {
-      for (const dx of look === 0 ? [0, 2] : look === 1 ? [0, 1] : [1, 2]) dot(x + dx, y + 1, OWL_EYES)
-    }
-  }
+  drawVisitor('roof')
 
   return px
 }
@@ -698,7 +778,7 @@ let isAutoOpened = false // opened unasked once this load, where it would be a s
 let visitor: Visitor | null = null // whoever is passing through now
 let visitAt = 0 // the frame the next visit is due
 
-/** Lets someone in now, keeping the weather they arrived in until they are gone. */
+/** Lets someone in now; they stay until out of sight, whatever the weather does meanwhile. */
 function visit(kind: VisitorKind) {
   visitor = { kind, start: frame, seed: Math.floor(Math.random() * 0x7fffffff) }
 }
@@ -727,21 +807,6 @@ async function resetWeather($: EngineInterface) {
   shown = target
 }
 
-const ARRIVALS: Record<VisitorKind, string> = {
-  birds: 'Here come some birds.',
-  cat: 'A cat is out on the roof.',
-  owl: 'An owl lands on the roof.',
-  bike: 'Is that a bike?',
-  door: 'There goes a shed door.',
-  'lost-umbrella': 'An umbrella blows past. Someone will miss that.',
-  star: 'Here comes a shooting star.',
-  kite: 'Someone is out flying a kite.',
-  plane: 'Here comes a plane.',
-  umbrella: 'Someone is heading out under an umbrella.',
-  duck: 'Here comes a duck.',
-  cow: 'Here comes a cow.',
-}
-
 /** Opens the pane at the person's word; the reply says if it waits undrawn. */
 async function openPane($: EngineInterface, done: string): Promise<{ text: string }> {
   const opened = await $.ui.open({ id: PANE, title: 'Weather', columns: 32 })
@@ -767,8 +832,7 @@ export const register: Register = on => {
       shown += (target - shown) * 0.04
       if (visitor && frame - visitor.start >= visitLength(visitor.kind, size?.columns ?? 0)) visitor = null
       if (!visitor && frame >= visitAt) {
-        const kind = visitorFor(shown, hour, Math.random())
-        if (kind) visit(kind)
+        visit(visitorFor(shown, hour, Math.random()))
         visitAt = frame + nextGap(Math.random())
       }
       if (!size) return
@@ -818,7 +882,7 @@ export const register: Register = on => {
       const kind = visitorNamed(guest[1]!)
       if (!kind) return { text: `Nobody called ${guest[1]} visits. Try ${VISITORS.join(', ')}.` }
       visit(kind)
-      return openPane($, ARRIVALS[kind])
+      return openPane($, KINDS[kind].arrival)
     }
     const isOpen = (await $.ui.panes()).some(p => p.id === PANE)
     if (isOpen) {
