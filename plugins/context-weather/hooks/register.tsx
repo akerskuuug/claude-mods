@@ -106,47 +106,107 @@ function mix(a: number, b: number, t: number): number {
 
 // ---------------------------------------------------------------- visitors
 
-// Now and then something passes through: birds on a fair day, a shooting star
-// on a clear night, a cow blown across a thunderstorm.
-export type VisitorKind = 'birds' | 'star' | 'cow'
+// Now and then something passes through, if the weather suits them: birds on a
+// fair day, a kite or a far-off plane under cloud, a shooting star on a clear
+// night, someone with an umbrella or a duck in the rain, a cow in a thunderstorm.
+export type VisitorKind = 'birds' | 'star' | 'kite' | 'plane' | 'umbrella' | 'duck' | 'cow'
 export type Visitor = { kind: VisitorKind; start: number; seed: number }
 
-export const VISITORS: readonly VisitorKind[] = ['birds', 'star', 'cow']
+export const VISITORS: readonly VisitorKind[] = ['birds', 'star', 'kite', 'plane', 'umbrella', 'duck', 'cow']
+
+// Other names /weather visit takes.
+const ALIASES: Record<string, VisitorKind> = {
+  bird: 'birds',
+  stars: 'star',
+  'shooting-star': 'star',
+  shootingstar: 'star',
+  kites: 'kite',
+  planes: 'plane',
+  airplane: 'plane',
+  aeroplane: 'plane',
+  umbrellas: 'umbrella',
+  person: 'umbrella',
+  ducks: 'duck',
+  cows: 'cow',
+}
+
+/** The visitor `/weather visit <name>` means, or null. */
+export function visitorNamed(name: string): VisitorKind | null {
+  const key = name.trim().toLowerCase()
+  return VISITORS.find(k => k === key) ?? ALIASES[key] ?? null
+}
 
 // Between visits: 3 to 8 minutes.
 const GAP_MIN = (3 * 60_000) / FRAME_MS
 const GAP_MAX = (8 * 60_000) / FRAME_MS
+// Where light rain turns heavy: the umbrella gives up from here.
+const HEAVY = 0.75
 
 // Pixels per frame.
 const BIRD_SPEED = 0.35
 const COW_SPEED = 0.9
+const PLANE_SPEED = 0.5
+const WALK_SPEED = 0.25
+const RUN_SPEED = 0.6
+const DUCK_SPEED = 0.2
 const STAR_FALL = 8 // frames the shooting star moves
 const STAR_FADE = 5 // frames it fades after
+const KITE_FRAMES = 320 // 40 seconds of kite flying
+const KITE_REEL = 40 // frames to let the kite out, and to reel it in
 
 /** Frames until the next visit, from a roll of 0..1. */
 export function nextGap(roll: number): number {
   return Math.round(GAP_MIN + clamp01(roll) * (GAP_MAX - GAP_MIN))
 }
 
-/** Who may visit this sky, or null when nobody would. */
-export function visitorFor(s: number, hour: number): VisitorKind | null {
+/** Who may visit this sky, or null when nobody would; `roll` (0..1) picks where two might. */
+export function visitorFor(s: number, hour: number, roll = 0): VisitorKind | null {
   if (s >= STORM) return 'cow'
+  if (s >= RAIN) return roll < 0.5 ? 'umbrella' : 'duck'
   const light = daylight(hour)
-  if (light < 0.3 && s < 0.3) return 'star'
-  if (light > 0.6 && s < 0.25) return 'birds'
-  return null
+  if (light < 0.3) return s < 0.3 ? 'star' : 'plane'
+  if (s >= 0.25) return light > 0.6 && roll < 0.5 ? 'kite' : 'plane'
+  return light > 0.6 ? 'birds' : null
 }
 
 /** How many frames a visit lasts in a scene `w` pixels wide: until it is out of sight. */
 export function visitLength(kind: VisitorKind, w: number): number {
-  if (kind === 'birds') return Math.ceil((w + 16) / BIRD_SPEED)
-  if (kind === 'cow') return Math.ceil((w + 16) / COW_SPEED)
-  return STAR_FALL + STAR_FADE
+  switch (kind) {
+    case 'birds':
+      return Math.ceil((w + 16) / BIRD_SPEED)
+    case 'cow':
+      return Math.ceil((w + 16) / COW_SPEED)
+    case 'plane':
+      return Math.ceil((w + 40) / PLANE_SPEED)
+    case 'umbrella':
+      return Math.ceil((w + 8) / WALK_SPEED)
+    case 'duck':
+      return Math.ceil((w + 12) / DUCK_SPEED)
+    case 'kite':
+      return KITE_FRAMES
+    case 'star':
+      return STAR_FALL + STAR_FADE
+  }
 }
 
 // A cow facing right, 8 by 4: White, Black patches, Pink snout, Legs.
 const COW = ['......WW', 'WBWWBWWP', 'WWBWWW..', 'L.L..L.L']
 const COW_COLORS: Record<string, number> = { W: 0xf4f1e8, B: 0x26221f, P: 0xf0a3a8, L: 0x5a4a40 }
+// A duck facing left, 5 by 3, in two waddle frames: Green head, Orange bill, White body.
+const DUCK = [
+  ['.G...', 'OGWWW', '..WWW'],
+  ['.G..W', 'OGWWW', '..WW.'],
+]
+const DUCK_COLORS: Record<string, number> = { G: 0x2f6b3a, O: 0xe8a23a, W: 0xf0ece0 }
+const SKIN = 0xe8b796
+const COAT = 0xe0b030
+const BOOTS = 0x3a3f4a
+const UMBRELLA = 0xc8423a
+const KITE = 0xd8443a
+const KITE_HEART = 0xf2c94c
+const STRING = 0xd8d2c0
+const PLANE = 0xd8dce4
+const BEACON = 0xff3b30
 const BIRD = 0x2b2f3a
 const SHOOTING = 0xffffff
 
@@ -246,6 +306,26 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
     px[y * w + x] = mix(px[y * w + x]!, color, alpha)
   }
   const t = visitor ? frame - visitor.start : -1
+  const shade = (color: number) => mix(color, 0x000000, (1 - light) * 0.35)
+  const sprite = (rows: string[], colors: Record<string, number>, x: number, y: number, isFlipped = false) => {
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[isFlipped ? rows.length - 1 - r : r]!
+      for (let c = 0; c < row.length; c++) {
+        const ch = row[isFlipped ? row.length - 1 - c : c]!
+        if (ch !== '.') dot(x + c, y + r, shade(colors[ch]!))
+      }
+    }
+  }
+  // Someone 3 pixels tall standing on the ground at `x`, legs apart mid-stride.
+  const person = (x: number, isStriding: boolean) => {
+    dot(x, groundY - 3, shade(SKIN))
+    dot(x, groundY - 2, shade(COAT))
+    if (isStriding) {
+      dot(x - 1, groundY - 1, shade(BOOTS))
+      dot(x + 1, groundY - 1, shade(BOOTS))
+    } else dot(x, groundY - 1, shade(BOOTS))
+  }
+  const door = Math.round(w * 0.18) + 3 // the house's middle: walkers come out from behind it
 
   // A shooting star streaks down and fades, behind the moon and the clouds.
   if (visitor?.kind === 'star' && t >= 0 && t < STAR_FALL + STAR_FADE) {
@@ -295,6 +375,16 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
   if (moonAlpha > 0 && moonT <= 1) {
     const { cx, cy } = arc(moonT)
     disc(cx, cy, 0xe9e4c8, moonAlpha, { dx: Math.ceil(r * 0.7), dy: -Math.ceil(r * 0.4) })
+  }
+
+  // A plane far off, its beacon blinking and its contrail fading behind it.
+  if (visitor?.kind === 'plane' && t >= 0) {
+    const dir = hash(visitor.seed + 2) < 0.5 ? -1 : 1
+    const x = Math.round(dir > 0 ? -2 + t * PLANE_SPEED : w + 1 - t * PLANE_SPEED)
+    const y = 1 + Math.floor(hash(visitor.seed + 1) * groundY * 0.2)
+    for (let j = 2; j < 30; j++) dot(x - dir * j, y, 0xffffff, (0.15 + 0.35 * light) * (1 - j / 30))
+    dot(x, y, shade(PLANE))
+    dot(x - dir, y, frame % 8 < 4 ? BEACON : shade(PLANE))
   }
 
   // Overcast ceiling with a wavy lower edge.
@@ -369,13 +459,47 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
   if (visitor?.kind === 'cow' && t >= 0) {
     const cx = Math.round(-8 + t * COW_SPEED)
     const cy = Math.floor(groundY * (0.3 + hash(visitor.seed + 1) * 0.35)) + Math.round(Math.sin(t / 6) * 2)
-    const isFlipped = Math.floor(t / 6) % 2 === 1
-    for (let r = 0; r < 4; r++) {
-      for (let c = 0; c < 8; c++) {
-        const ch = isFlipped ? COW[3 - r]![7 - c]! : COW[r]![c]!
-        if (ch !== '.') dot(cx + c, cy + r, mix(COW_COLORS[ch]!, 0x000000, (1 - light) * 0.35))
-      }
+    sprite(COW, COW_COLORS, cx, cy, Math.floor(t / 6) % 2 === 1)
+  }
+
+  // Someone walks out under an umbrella; in heavy rain it blows inside out halfway and they run.
+  if (visitor?.kind === 'umbrella' && t >= 0) {
+    const mid = Math.max(door, Math.round(w * 0.55))
+    const flipAt = (mid - door) / WALK_SPEED
+    const isBlown = s >= HEAVY && t >= flipAt
+    const x = Math.round(isBlown ? mid + (t - flipAt) * RUN_SPEED : door + t * WALK_SPEED)
+    person(x, Math.floor(t / (isBlown ? 1 : 2)) % 2 === 1)
+    const red = shade(UMBRELLA)
+    dot(x, groundY - 4, shade(BOOTS))
+    if (isBlown) {
+      dot(x - 2, groundY - 6, red)
+      dot(x + 2, groundY - 6, red)
+      for (let dx = -1; dx <= 1; dx++) dot(x + dx, groundY - 5, red)
+    } else {
+      for (let dx = -2; dx <= 2; dx++) dot(x + dx, groundY - 5, red)
+      for (let dx = -1; dx <= 1; dx++) dot(x + dx, groundY - 6, red)
     }
+  }
+
+  // A duck waddles through the rain, glad of it.
+  if (visitor?.kind === 'duck' && t >= 0) {
+    sprite(DUCK[Math.floor(t / 4) % 2]!, DUCK_COLORS, Math.round(w + 1 - t * DUCK_SPEED), groundY - 3)
+  }
+
+  // Someone by the house flies a kite; the wind leans it over, harder the fuller the context.
+  if (visitor?.kind === 'kite' && t >= 0 && t < KITE_FRAMES) {
+    const x = door + 5
+    person(x, false)
+    const reach = Math.min(w * 0.5, groundY * 0.7) * clamp01(Math.min(t, KITE_FRAMES - t) / KITE_REEL)
+    const lean = 0.35 + s * 0.8
+    const [hx, hy] = [x + 1, groundY - 2]
+    const kx = Math.round(hx + Math.sin(lean) * reach + Math.sin(t / 7) * 1.5)
+    const ky = Math.round(hy - Math.cos(lean) * reach + Math.sin(t / 5))
+    const n = Math.max(Math.abs(kx - hx), Math.abs(ky - hy))
+    for (let i = 1; i < n; i += 2) dot(Math.round(hx + ((kx - hx) * i) / n), Math.round(hy + ((ky - hy) * i) / n), STRING, 0.6)
+    for (let j = 1; j <= 3; j++) dot(kx + Math.round(j * 0.5 + Math.sin(t / 3 + j) * 0.6), ky + 1 + j, shade(KITE_HEART))
+    for (const [dx, dy] of [[0, -1], [-1, 0], [1, 0], [0, 1]] as const) dot(kx + dx, ky + dy, shade(KITE))
+    dot(kx, ky, shade(KITE_HEART))
   }
 
   // The bolt itself.
@@ -483,6 +607,16 @@ async function resetWeather($: EngineInterface) {
   shown = target
 }
 
+const ARRIVALS: Record<VisitorKind, string> = {
+  birds: 'Here come some birds.',
+  star: 'Here comes a shooting star.',
+  kite: 'Someone is out flying a kite.',
+  plane: 'Here comes a plane.',
+  umbrella: 'Someone is heading out under an umbrella.',
+  duck: 'Here comes a duck.',
+  cow: 'Here comes a cow.',
+}
+
 /** Opens the pane at the person's word; the reply says if it waits undrawn. */
 async function openPane($: EngineInterface, done: string): Promise<{ text: string }> {
   const opened = await $.ui.open({ id: PANE, title: 'Weather', columns: 32 })
@@ -495,8 +629,8 @@ export const register: Register = on => {
     await $.command.register({
       name: 'weather',
       description:
-        'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock, "visit cow|birds|star" sends one by',
-      argumentHint: '[at HH:MM|now|visit cow|birds|star]',
+        'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock, "visit <name>" sends a visitor by',
+      argumentHint: '[at HH:MM|now|visit birds|star|kite|plane|umbrella|duck|cow]',
     })
     await resetWeather($)
     pinned = await read($, override)
@@ -508,7 +642,7 @@ export const register: Register = on => {
       shown += (target - shown) * 0.04
       if (visitor && frame - visitor.start >= visitLength(visitor.kind, size?.columns ?? 0)) visitor = null
       if (!visitor && frame >= visitAt) {
-        const kind = visitorFor(shown, hour)
+        const kind = visitorFor(shown, hour, Math.random())
         if (kind) visit(kind)
         visitAt = frame + nextGap(Math.random())
       }
@@ -556,10 +690,10 @@ export const register: Register = on => {
     }
     const guest = /^visit\s+(\S+)$/.exec(e.args.trim())
     if (guest) {
-      const kind = VISITORS.find(k => k === guest[1])
+      const kind = visitorNamed(guest[1]!)
       if (!kind) return { text: `Nobody called ${guest[1]} visits. Try ${VISITORS.join(', ')}.` }
       visit(kind)
-      return openPane($, kind === 'birds' ? 'Here come some birds.' : `Here comes a ${kind === 'star' ? 'shooting star' : kind}.`)
+      return openPane($, ARRIVALS[kind])
     }
     const isOpen = (await $.ui.panes()).some(p => p.id === PANE)
     if (isOpen) {
