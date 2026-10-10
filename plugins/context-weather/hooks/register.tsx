@@ -192,12 +192,12 @@ export function visitLength(kind: VisitorKind, w: number): number {
 // A cow facing right, 8 by 4: White, Black patches, Pink snout, Legs.
 const COW = ['......WW', 'WBWWBWWP', 'WWBWWW..', 'L.L..L.L']
 const COW_COLORS: Record<string, number> = { W: 0xf4f1e8, B: 0x26221f, P: 0xf0a3a8, L: 0x5a4a40 }
-// A duck facing left, 5 by 3, in two waddle frames: Green head, Orange bill, White body.
+// A duck facing left, 5 by 4, in two waddle frames: Green head, Orange bill, White body, webbed Feet.
 const DUCK = [
-  ['.G...', 'OGWWW', '..WWW'],
-  ['.G..W', 'OGWWW', '..WW.'],
+  ['.G...', 'OGWWW', '..WWW', '..F.F'],
+  ['.G..W', 'OGWWW', '..WW.', '...F.'],
 ]
-const DUCK_COLORS: Record<string, number> = { G: 0x2f6b3a, O: 0xe8a23a, W: 0xf0ece0 }
+const DUCK_COLORS: Record<string, number> = { G: 0x2f6b3a, O: 0xe8a23a, W: 0xf0ece0, F: 0xd8862a }
 const SKIN = 0xe8b796
 const COAT = 0xe0b030
 const BOOTS = 0x3a3f4a
@@ -483,7 +483,7 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
 
   // A duck waddles through the rain, glad of it.
   if (visitor?.kind === 'duck' && t >= 0) {
-    sprite(DUCK[Math.floor(t / 4) % 2]!, DUCK_COLORS, Math.round(w + 1 - t * DUCK_SPEED), groundY - 3)
+    sprite(DUCK[Math.floor(t / 4) % 2]!, DUCK_COLORS, Math.round(w + 1 - t * DUCK_SPEED), groundY - 4)
   }
 
   // Someone by the house flies a kite; the wind leans it over, harder the fuller the context.

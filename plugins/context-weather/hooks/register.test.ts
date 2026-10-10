@@ -361,6 +361,16 @@ describe('visitors', () => {
     expect(paint(32, 40, 0.7, 150, 12, visit('duck')).includes(0xe8a23a)).toBe(true)
   })
 
+  test('the duck stands on its feet, on the ground', async () => {
+    const groundY = 40 - Math.round(40 * 0.12)
+    const feet = (f: number) => {
+      const px = paint(32, 40, 0.7, f, 12, visit('duck'))
+      return [...px.keys()].filter(i => px[i] === 0xd8862a).map(i => Math.floor(i / 32))
+    }
+    expect(feet(150).length).toBeGreaterThan(0)
+    expect(new Set([...feet(150), ...feet(154)])).toEqual(new Set([groundY - 1]))
+  })
+
   test('/weather visit sends one by, and names who can come', async ($, on) => {
     mock.clock(on)
     on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
