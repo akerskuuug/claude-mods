@@ -32,7 +32,7 @@ Every 3 to 8 minutes, at random, someone may pass through, if the weather suits 
 | --- | --- |
 | clear or fair, by day | a few birds flapping across |
 | clear or fair, at dawn and dusk | a cat, who climbs to the roof's peak, sits a while and goes on |
-| clear, at night | a shooting star, or an owl on the roof, blinking and looking about |
+| clear or fair, at night | a shooting star, or an owl on the roof, blinking and looking about |
 | partly cloudy or overcast | someone flying a kite by the house (by day), a far-off plane with a blinking beacon, or at night the owl |
 | rain | someone walking out under an umbrella, which blows inside out in heavy rain and sends them running; or a duck, waddling through |
 | thunderstorm | whatever the gale picked up, tumbling past: a bike, a shed door, the umbrella someone lost, or (one time in four) a cow |

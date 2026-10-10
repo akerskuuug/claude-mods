@@ -12,6 +12,8 @@ const STORM = 0.88
 const RAIN = 0.6
 // The terminal width from which the pane opens by itself.
 const WIDE = 144
+const DEFAULT_COLUMNS = 32
+
 
 const percent = atom({ plugin: 'context-weather', key: 'percent' } as const, null)
 const phaseNow = atom({ plugin: 'context-weather', key: 'phase' } as const, null)
@@ -159,13 +161,16 @@ export function nextGap(roll: number): number {
 const pick = <T,>(list: readonly T[], roll: number): T => list[Math.min(list.length - 1, Math.floor(roll * list.length))]!
 
 /** Who visits this sky; `roll` (0..1) picks where several might. */
-export function visitorFor(s: number, hour: number, roll = 0): VisitorKind {
+export function visitorFor(s: number, hour: number, roll = 0, hasHouse = true): VisitorKind {
   if (s >= STORM) return pick(STORM_VISITORS, roll)
   if (s >= RAIN) return roll < 0.5 ? 'umbrella' : 'duck'
   const phase = dayPhase(hour)
-  if (s < 0.25 && (phase === 'dawn' || phase === 'dusk')) return 'cat'
+  if (s < 0.25 && (phase === 'dawn' || phase === 'dusk')) return hasHouse ? 'cat' : 'birds'
   const light = daylight(hour)
-  if (light < 0.3) return roll < 0.5 ? (s < 0.3 ? 'star' : 'plane') : 'owl'
+  if (light < 0.3) {
+    if (!hasHouse) return s < 0.25 ? 'star' : 'plane'
+    return roll < 0.5 ? (s < 0.25 ? 'star' : 'plane') : 'owl'
+  }
   if (s >= 0.25) return light > 0.6 && roll < 0.5 ? 'kite' : 'plane'
   return 'birds'
 }
@@ -571,7 +576,7 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
   // Whoever is visiting, drawn in turn at its layer.
   const hasHouse = w >= 16 && groundY >= 8
   const hx = Math.round(w * 0.18)
-  const roofTop = (x: number) => groundY - 7 + Math.max(0, hx + 1 - x, x - (hx + 4)) // a three-step gable
+  const roofTop = (x: number) => (hasHouse ? groundY - 7 + Math.max(0, hx + 1 - x, x - (hx + 4)) : groundY) // a three-step gable, or ground fallback
   const t = visitor ? frame - visitor.start : -1
   const guest = visitor && t >= 0 && t < visitLength(visitor.kind, w) ? KINDS[visitor.kind] : null
   const scene: Scene = {
@@ -603,7 +608,7 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
     },
   }
   const drawVisitor = (layer: Layer) => {
-    if (guest?.layer === layer && (layer !== 'roof' || hasHouse)) guest.draw(scene, t, visitor!.seed)
+    if (guest?.layer === layer) guest.draw(scene, t, visitor!.seed)
   }
 
   // Sun and moon ride an arc from the left horizon to the right one.
@@ -771,6 +776,7 @@ let frame = 0
 let target = 0 // storminess the context asks for
 let shown = 0 // storminess on screen, easing toward the target
 let size: { columns: number; rows: number } | null = null
+let lastColumns = DEFAULT_COLUMNS
 let hour = 12 // local time of day the scene shows
 let clockHour = 12 // the real one
 let pinned: number | null = null // a time /weather at set, or null to follow the clock
@@ -809,7 +815,7 @@ async function resetWeather($: EngineInterface) {
 
 /** Opens the pane at the person's word; the reply says if it waits undrawn. */
 async function openPane($: EngineInterface, done: string): Promise<{ text: string }> {
-  const opened = await $.ui.open({ id: PANE, title: 'Weather', columns: 32 })
+  const opened = await $.ui.open({ id: PANE, title: 'Weather', columns: DEFAULT_COLUMNS })
   return { text: opened.isPlaced ? done : `${done} The window is not shown yet: ${opened.reason}` }
 }
 
@@ -830,9 +836,10 @@ export const register: Register = on => {
     $.clock.every(FRAME_MS, () => {
       frame += 1
       shown += (target - shown) * 0.04
-      if (visitor && frame - visitor.start >= visitLength(visitor.kind, size?.columns ?? 0)) visitor = null
+      if (visitor && frame - visitor.start >= visitLength(visitor.kind, size?.columns ?? lastColumns)) visitor = null
       if (!visitor && frame >= visitAt) {
-        visit(visitorFor(shown, hour, Math.random()))
+        const hasHouse = size ? size.columns >= 16 && groundLine(size.rows * 2) >= 8 : lastColumns >= 16
+        visit(visitorFor(shown, hour, Math.random(), hasHouse))
         visitAt = frame + nextGap(Math.random())
       }
       if (!size) return
@@ -899,7 +906,7 @@ export const register: Register = on => {
     on('ui.render', { component }, ($, e, next) => {
       if (!isAutoOpened && e.surface === 'terminal' && e.viewport?.isFullscreen === true && e.viewport.columns >= WIDE) {
         isAutoOpened = true
-        void $.ui.open({ id: PANE, title: 'Weather', columns: 32 })
+        void $.ui.open({ id: PANE, title: 'Weather', columns: DEFAULT_COLUMNS })
       }
       return next(e)
     })
@@ -925,6 +932,7 @@ export const register: Register = on => {
       return <Text>{caption}</Text>
     }
     const { Box, Raster, Text } = $.ui.resolve(e)
+    lastColumns = columns
     size = { columns, rows }
 
     return (
