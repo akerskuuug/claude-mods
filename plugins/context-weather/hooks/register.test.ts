@@ -14,7 +14,9 @@ import {
   rainfall,
   visitLength,
   visitorFor,
+  visitorNamed,
 } from './register'
+import type { VisitorKind } from './register'
 
 const decode = (cells: string) => {
   const bin = atob(cells)
@@ -279,15 +281,28 @@ describe('pane', () => {
 })
 
 describe('visitors', () => {
-  const visit = (kind: 'birds' | 'star' | 'cow', start = 100) => ({ kind, start, seed: 42 })
+  const visit = (kind: VisitorKind, start = 100) => ({ kind, start, seed: 42 })
 
   test('come only in their weather', async () => {
     expect(visitorFor(0.95, 12)).toBe('cow')
     expect(visitorFor(0.95, 2)).toBe('cow')
     expect(visitorFor(0, 2)).toBe('star')
     expect(visitorFor(0.1, 12)).toBe('birds')
-    expect(visitorFor(0.5, 12)).toBe(null)
-    expect(visitorFor(0.7, 2)).toBe(null)
+    expect(visitorFor(0.4, 12, 0.2)).toBe('kite')
+    expect(visitorFor(0.4, 12, 0.8)).toBe('plane')
+    expect(visitorFor(0.4, 2, 0.2)).toBe('plane')
+    expect(visitorFor(0.7, 2, 0.2)).toBe('umbrella')
+    expect(visitorFor(0.7, 12, 0.8)).toBe('duck')
+    expect(visitorFor(0.1, 6)).toBe(null)
+  })
+
+  test('answer to other names', async () => {
+    expect(visitorNamed('stars')).toBe('star')
+    expect(visitorNamed('Bird')).toBe('birds')
+    expect(visitorNamed('shooting-star')).toBe('star')
+    expect(visitorNamed('airplane')).toBe('plane')
+    expect(visitorNamed('duck')).toBe('duck')
+    expect(visitorNamed('dragon')).toBe(null)
   })
 
   test('come every 3 to 8 minutes, at 8 frames a second', async () => {
@@ -316,6 +331,36 @@ describe('visitors', () => {
     expect(head(100 + visitLength('star', 32))).toBe(false)
   })
 
+  test('a plane blinks across behind the clouds', async () => {
+    const beacon = (f: number) => paint(32, 40, 0.4, f, 12, visit('plane')).includes(0xff3b30)
+    expect(paint(32, 40, 0.4, 130, 12).includes(0xff3b30)).toBe(false)
+    expect(Array.from({ length: 8 }, (_, i) => beacon(130 + i)).some(Boolean)).toBe(true)
+  })
+
+  test('a kite goes up, and comes down again', async () => {
+    const heart = (f: number) => paint(32, 40, 0.4, f, 12, visit('kite')).includes(0xf2c94c)
+    expect(heart(250)).toBe(true)
+    expect(heart(100 + visitLength('kite', 32))).toBe(false)
+  })
+
+  test('in heavy rain the umbrella blows inside out and they run', async () => {
+    const at = (s: number, f: number) => {
+      const px = paint(40, 40, s, f, 12, visit('umbrella'))
+      const xs = [...px.keys()].filter(i => px[i] === 0xc8423a).map(i => i % 40)
+      return { left: Math.min(...xs), right: Math.max(...xs) }
+    }
+    const light = at(0.65, 160)
+    const heavy = at(0.8, 160)
+    expect(light.right - light.left).toBe(4)
+    expect(heavy.left).toBeGreaterThan(light.left)
+    expect(paint(40, 40, 0.65, 100, 12, visit('umbrella')).includes(0xc8423a)).toBe(false)
+  })
+
+  test('a duck waddles through the rain', async () => {
+    expect(paint(32, 40, 0.7, 150, 12).includes(0xe8a23a)).toBe(false)
+    expect(paint(32, 40, 0.7, 150, 12, visit('duck')).includes(0xe8a23a)).toBe(true)
+  })
+
   test('/weather visit sends one by, and names who can come', async ($, on) => {
     mock.clock(on)
     on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
@@ -324,8 +369,9 @@ describe('visitors', () => {
     on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
     await $.session.start({ cwd: '/', surface: 'terminal' } as never)
     expect((await $.command.run({ command: 'weather', args: 'visit cow' })).text).toBe('Here comes a cow.')
+    expect((await $.command.run({ command: 'weather', args: 'visit stars' })).text).toBe('Here comes a shooting star.')
     expect((await $.command.run({ command: 'weather', args: 'visit dragon' })).text).toBe(
-      'Nobody called dragon visits. Try birds, star, cow.',
+      'Nobody called dragon visits. Try birds, star, kite, plane, umbrella, duck, cow.',
     )
   })
 })

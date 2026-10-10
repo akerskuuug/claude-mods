@@ -28,17 +28,21 @@ The sun rises at 6:00 and sets at 20:00, local time, crossing the sky between th
 
 Every 3 to 8 minutes, at random, someone may pass through, if the weather suits them:
 
-- a few birds flapping across a clear or fair sky by day;
-- a shooting star on a clear night;
-- a cow, tumbling across a thunderstorm.
+| Weather | Visitor |
+| --- | --- |
+| clear or fair, by day | a few birds flapping across |
+| clear, at night | a shooting star |
+| partly cloudy or overcast | someone flying a kite by the house (by day), or a far-off plane with a blinking beacon |
+| rain | someone walking out under an umbrella, which blows inside out in heavy rain and sends them running; or a duck, waddling through |
+| thunderstorm | a cow, tumbling across on the gale |
 
-In other weather nobody comes. A visitor who arrives stays until they are out of sight, even if the weather changes.
+At dawn and dusk under a clear sky nobody comes. A visitor who arrives stays until they are out of sight, even if the weather changes.
 
 ## Commands
 
 - `/weather` opens or closes the window.
 - `/weather at 22:30` shows that time of day instead of the clock (handy for a preview); `/weather at now` follows the clock again.
-- `/weather visit cow` (or `birds`, `star`) sends one by now, whatever the weather.
+- `/weather visit cow` sends a visitor by now, whatever the weather: `birds`, `star`, `kite`, `plane`, `umbrella`, `duck` or `cow` (plurals work too).
 
 ## Where it shows
 
