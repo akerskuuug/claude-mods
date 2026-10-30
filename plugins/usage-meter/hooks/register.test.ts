@@ -245,4 +245,30 @@ describe('prompt cache', () => {
       await ui.unmount()
     }
   })
+
+  test('restores the TTL the engine named after /clear or /resume', async ($, on) => {
+    // /clear and /resume reset state with no session.start: only the store remembers.
+    let stored: string | undefined
+    mock.clock(on)
+    on('store.get', async (_$, e) => ({ value: e.key === 'cacheTtl' ? stored : undefined }) as never)
+    on('store.set', async () => ({ value: undefined }) as never)
+    on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+    on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 10 }] } }) as never)
+    on('session.model', async () => ({ value: 'claude-opus-5-5' }) as never)
+    on('session.cwd', async () => ({ value: '/r' }) as never)
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    on('classic.SessionStart', async () => ({}) as never)
+    await $.session.start({ cwd: '/r', surface: 'terminal' } as never)
+
+    stored = '5m'
+    await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 120 } as never)
+    const ui = await $.ui.mount({
+      plugin: 'usage-meter',
+      surface: 'terminal',
+      component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120 } as never,
+    })
+    expect(await ui.find({ type: 'Text', text: '3m' })).toBeDefined()
+    await ui.unmount()
+  })
 })
