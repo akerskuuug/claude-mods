@@ -1,7 +1,7 @@
 {
   "name": "usage-meter",
-  "version": "0.4.0",
-  "description": "Directory, branch, worktree, model and effort, with 5h and weekly limits (subscription) or cost (pay-per-token), above the prompt; context below it",
+  "version": "0.5.0",
+  "description": "Directory, branch, worktree, model, effort and prompt-cache warmth, with 5h and weekly limits (subscription) or cost (pay-per-token), above the prompt; context below it",
   "author": { "name": "Viktor Åkerskog" },
   "license": "MIT",
   "types": "./types/index.d.ts"

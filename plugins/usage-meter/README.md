@@ -2,7 +2,8 @@
 
 A Claude Code mod that shows, around the prompt:
 
-- **Above:** the current directory and git branch (with a `●` when dirty) on the left, cut short with `…` rather than wrapping. In a worktree, a `⎇` button stands in for its name and opens the worktree, directory and branch in full; the directory is named only when you are in a subfolder of it. A directory the branch already ends with (`issue-538` on `feat/issue-538`) is left to the branch. Model and effort are on the right, followed by the usage meter:
+- **Above:** the current directory and git branch (with a `●` when dirty) on the left, cut short with `…` rather than wrapping. In a worktree, a `⎇` button stands in for its name and opens the worktree, directory and branch in full; the directory is named only when you are in a subfolder of it. A directory the branch already ends with (`issue-538` on `feat/issue-538`) is left to the branch. Model and effort are on the right, then the prompt cache, followed by the usage meter:
+  - **Prompt cache:** an outline fire with the minutes left while the cache is warm, an outline ice cube once it has gone cold (the next message re-sends the whole context at full price). Nothing shows before the first request.
   - **Subscription:** 5-hour and weekly rate limits as bars with the percent left and time until reset.
   - **Pay-per-token:** a `Cost` control. Press the period button to switch between Session, Today, 7 days and 30 days (the list opens on the right, below the meter); `ⓘ` explains how the estimate works.
 - **Below:** context as a bar twice as wide as the limit bars (fills as the window is used; green, then yellow, then red as little is left), with used/window beside it.
@@ -10,6 +11,12 @@ A Claude Code mod that shows, around the prompt:
 ## Subscription or metered?
 
 The mod infers billing from what Claude Code reports: rate-limit windows (`five_hour`, `seven_day`) exist only on a subscription. With none, and a priced response already in, billing is treated as metered. Before the first response it can't tell, so it uses the mode it saw last (remembered across sessions); on first use it shows neither until it knows.
+
+## Prompt cache
+
+The cache counts as warm until its TTL has passed since the main thread's last request (subagents don't count). Claude Code names the TTL to hooks only around a model switch, so until one has been seen (remembered across sessions) a subscription is taken to cache for an hour and a pay-per-token key for 5 minutes. A resumed or forked session starts from the time of its last response; `/clear`, `/compact` and a model switch start it cold.
+
+The icons are drawn as images in terminals that support them (kitty, Ghostty, iTerm2 3.5+ in fullscreen); other terminals show the 🔥 and 🧊 emoji instead.
 
 ## Cost estimates
 

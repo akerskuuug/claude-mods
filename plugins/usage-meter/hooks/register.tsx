@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Color, EngineInterface, Register } from 'claude-code'
 
-import type { CostView, GitState, KnownBilling, Usage } from '../types'
+import type { CacheTtl, CostView, GitState, KnownBilling, Usage } from '../types'
 
 const usage = atom({ plugin: 'usage-meter', key: 'usage' } as const, null)
 const now = atom({ plugin: 'usage-meter', key: 'now' } as const, null)
@@ -17,6 +17,9 @@ const sessionCost = atom({ plugin: 'usage-meter', key: 'sessionCost' } as const,
 const knownBilling = atom({ plugin: 'usage-meter', key: 'knownBilling' } as const, null as KnownBilling | null)
 const dir = atom({ plugin: 'usage-meter', key: 'dir' } as const, null)
 const worktreeOpen = atom({ plugin: 'usage-meter', key: 'worktreeOpen' } as const, false)
+// When the main thread last sent a request (clock ms).
+const cacheAt = atom({ plugin: 'usage-meter', key: 'cacheAt' } as const, null as number | null)
+const cacheTtl = atom({ plugin: 'usage-meter', key: 'cacheTtl' } as const, null as CacheTtl | null)
 
 const BAR_CELLS = 10
 const CONTEXT_CELLS = BAR_CELLS * 2
@@ -79,6 +82,99 @@ const COST_EXPLANATION = [
   "Today, 7 days and 30 days (~) are estimates: this mod scans the local logs in ~/.claude/projects and Cowork sessions, counts each message's token usage once, and prices it at public API list prices per model.",
   'Discounts, other machines and logs older than 30 days are not reflected, usage billed to a subscription is priced the same way, and unrecognised models are priced as Sonnet. Refreshed at most once a minute.',
 ]
+
+export type CacheMode = 'warm' | 'cold'
+
+// The engine reports the TTL only around a model switch. Until one has been
+// seen, a subscription is taken to cache for an hour and a metered key for 5 minutes.
+export function cacheTtlMs(seen: CacheTtl | null, billing: BillingMode): number {
+  const ttl = seen ?? (billing === 'metered' ? '5m' : '1h')
+  return ttl === '5m' ? 5 * MINUTE : LONGEST_TTL
+}
+
+// Stamped as the last request's time, this reads as cold under any TTL.
+const LONGEST_TTL = 60 * MINUTE
+
+// Warm until the TTL has passed since the last request, with whole minutes left.
+export function cacheState(lastAt: number | null, nowMs: number, ttlMs: number): { mode: CacheMode; minutesLeft: number } | null {
+  if (lastAt === null) return null
+  const left = Math.min(ttlMs, lastAt + ttlMs - nowMs)
+  return left > 0 ? { mode: 'warm', minutesLeft: Math.ceil(left / MINUTE) } : { mode: 'cold', minutesLeft: 0 }
+}
+
+// Outline pixel art, one cell per pixel: drawn as an Image in the terminal
+// (2 columns by 1 row) and as an Svg elsewhere.
+export const CACHE_ICONS: Record<CacheMode, { rows: string[]; color: number; alt: string }> = {
+  warm: {
+    color: 0xe07a4a,
+    alt: '🔥',
+    rows: [
+      '...............',
+      '.......#.......',
+      '......#.#......',
+      '.....#...#.....',
+      '.....#....#....',
+      '....#......#.#.',
+      '...#........##.',
+      '...#..#......#.',
+      '..#..#.#.....#.',
+      '..#..#..#....#.',
+      '..#.#....#...#.',
+      '..#.#....#...#.',
+      '..#..#..#...#..',
+      '...#..##...#...',
+      '....##....##...',
+      '......####.....',
+    ],
+  },
+  cold: {
+    color: 0x6aaabd,
+    alt: '🧊',
+    rows: [
+      '...............',
+      '.......#.......',
+      '.....##.##.....',
+      '...##.....##...',
+      '.##.........##.',
+      '.#.##.....##.#.',
+      '.#...##.##...#.',
+      '.#.....#.....#.',
+      '.#.#...#.....#.',
+      '.#.#...#.....#.',
+      '.#.....#.....#.',
+      '.#.....#.....#.',
+      '.##....#....##.',
+      '...##..#..##...',
+      '.....##.##.....',
+      '.......#.......',
+    ],
+  },
+}
+
+export function iconRgba(rows: string[], color: number): Uint8Array {
+  const width = rows[0]!.length
+  const px = new Uint8Array(width * rows.length * 4)
+  rows.forEach((row, y) =>
+    [...row].forEach((c, x) => {
+      if (c !== '#') return
+      px.set([(color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff, 0xff], (y * width + x) * 4)
+    }),
+  )
+  return px
+}
+
+export function iconSvg(rows: string[], color: number): string {
+  const d = rows.flatMap((row, y) => [...row].flatMap((c, x) => (c === '#' ? [`M${x} ${y}h1v1h-1z`] : []))).join('')
+  const fill = `#${color.toString(16).padStart(6, '0')}`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${rows[0]!.length} ${rows.length}" shape-rendering="crispEdges"><path fill="${fill}" d="${d}"/></svg>`
+}
+
+const ICON_SOURCES = Object.fromEntries(
+  Object.entries(CACHE_ICONS).map(([mode, { rows, color, alt }]) => [
+    mode,
+    { rgba: iconRgba(rows, color).toBase64(), width: rows[0]!.length, height: rows.length, svg: iconSvg(rows, color), alt },
+  ]),
+) as Record<CacheMode, { rgba: string; width: number; height: number; svg: string; alt: string }>
 
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`
@@ -254,6 +350,8 @@ export const register: Register = on => {
     await noteCost($, cost, { context, rateLimits })
     await tick($)
     await refreshModel($)
+    const ttl = await $.store.get('cacheTtl')
+    if (ttl === '5m' || ttl === '1h') await update($, cacheTtl, () => ttl)
     $.clock.every(MINUTE, () => tick($))
     return result
   })
@@ -277,8 +375,31 @@ export const register: Register = on => {
       const level = e.effort === undefined ? null : `${e.effort}`
       update($, effort, () => level).catch(() => {})
       update($, model, () => e.model).catch(() => {})
+      const sentAt = await $.clock.now()
+      update($, cacheAt, () => sentAt).catch(() => {})
     }
     return yield* next(e)
+  })
+
+  // A resumed or forked transcript's cache is as old as its last response;
+  // /clear and /compact start the next request from nothing.
+  on('classic.SessionStart', async ($, e, next) => {
+    if (e.source === 'clear' || e.source === 'compact') await update($, cacheAt, () => null)
+    else if ((e.source === 'resume' || e.source === 'fork') && typeof e.seconds_since_last_response === 'number') {
+      const time = await $.clock.now()
+      const lastAt = time - e.seconds_since_last_response * 1000
+      await update($, cacheAt, () => (e.prompt_cache_likely_expired ? Math.min(lastAt, time - LONGEST_TTL) : lastAt))
+    }
+    return next(e)
+  })
+
+  // The only place the engine names the TTL. A switch leaves the new model's cache cold.
+  on('classic.PostModelSwitch', async ($, e, next) => {
+    await update($, cacheTtl, () => e.cache_ttl)
+    await $.store.set('cacheTtl', e.cache_ttl)
+    const time = await $.clock.now()
+    if (e.from_model !== e.to_model) await update($, cacheAt, v => (v === null ? null : time - LONGEST_TTL))
+    return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -298,8 +419,23 @@ export const register: Register = on => {
     const spentSession = await read($, sessionCost)
     const mode = await currentBilling($)
     const isMetered = mode === 'metered'
+    const lastAt = await read($, cacheAt)
+    // Reading `now` redraws on the minute tick; the clock itself is read fresh,
+    // since /clear and /resume reset `now` until the next tick.
+    await read($, now)
+    const cache = cacheState(lastAt, await $.clock.now(), cacheTtlMs(await read($, cacheTtl), mode))
 
     const { Box, Button, Text } = $.ui.resolve(e)
+
+    const cacheIcon = (m: CacheMode) => {
+      const icon = ICON_SOURCES[m]
+      if (e.surface === 'terminal') {
+        const { Image } = $.ui.resolve(e)
+        return <Image source={{ rgba: icon.rgba, width: icon.width, height: icon.height }} columns={2} rows={1} alt={icon.alt} />
+      }
+      const { Svg } = $.ui.resolve(e)
+      return <Svg source={icon.svg} alt={m === 'warm' ? 'Prompt cache warm' : 'Prompt cache cold'} width={14} height={15} />
+    }
 
     const meter = (label: string, kind: string, nowMs: number | null) => {
       const left = percentLeft(kind, u)
@@ -385,6 +521,12 @@ export const register: Register = on => {
               <Box key="model">
                 <Text color="claude">{formatModel(modelId)}</Text>
                 {effortLevel && <Text dimColor> · {effortLevel}</Text>}
+              </Box>
+            )}
+            {cache && (
+              <Box key="cache" columnGap={1}>
+                {cacheIcon(cache.mode)}
+                {cache.mode === 'warm' && <Text dimColor>{`${cache.minutesLeft}m`}</Text>}
               </Box>
             )}
             {limits}
