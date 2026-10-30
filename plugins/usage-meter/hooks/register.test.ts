@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { barFill, baseName, billingMode, CACHE_ICONS, cacheState, cacheTtlMs, iconRgba, iconSvg, resolveBilling, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, locationLabel, parseGitStatus, parseWorktree, percentLeft } from './register'
+import { barFill, baseName, billingMode, CACHE_ICONS, cacheExplanation, cacheState, cacheTtlMs, cacheTtlOf, recacheCost, iconRgba, iconSvg, resolveBilling, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, locationLabel, parseGitStatus, parseWorktree, percentLeft } from './register'
 
 describe('usage-meter', () => {
   test('formats tokens like 10k/1M', async () => {
@@ -192,11 +192,28 @@ describe('prompt cache', () => {
   })
 
   test('takes the TTL the engine named, else guesses from billing', async () => {
-    expect(cacheTtlMs('5m', 'subscription')).toBe(5 * MIN)
-    expect(cacheTtlMs('1h', 'metered')).toBe(60 * MIN)
-    expect(cacheTtlMs(null, 'metered')).toBe(5 * MIN)
-    expect(cacheTtlMs(null, 'subscription')).toBe(60 * MIN)
-    expect(cacheTtlMs(null, 'unknown')).toBe(60 * MIN)
+    expect(cacheTtlOf('5m', 'subscription')).toBe('5m')
+    expect(cacheTtlOf('1h', 'metered')).toBe('1h')
+    expect(cacheTtlOf(null, 'metered')).toBe('5m')
+    expect(cacheTtlOf(null, 'subscription')).toBe('1h')
+    expect(cacheTtlOf(null, 'unknown')).toBe('1h')
+    expect(cacheTtlMs('5m')).toBe(5 * MIN)
+    expect(cacheTtlMs('1h')).toBe(60 * MIN)
+  })
+
+  test('prices a re-cache at the write rate of its TTL', async () => {
+    // Opus 5.5 input is $4/M: 1h writes 2x, 5m writes 1.25x.
+    expect(recacheCost('claude-opus-5-5', 200_000, '1h', 0).toFixed(2)).toBe('1.60')
+    expect(recacheCost('claude-opus-5-5', 200_000, '5m', 0).toFixed(2)).toBe('1.00')
+  })
+
+  test('explains the cache in one line, with cost only when given', async () => {
+    expect(cacheExplanation({ mode: 'warm', minutesLeft: 42 }, '1h', true, 182_000, 1.94)).toBe(
+      'Prompt cache warm for 42 more min (1 h TTL). Once cold, the next message re-caches 182k tokens, ~$1.94.',
+    )
+    expect(cacheExplanation({ mode: 'cold', minutesLeft: 0 }, '5m', false, 182_000, null)).toBe(
+      'Prompt cache cold (5 min TTL, assumed): the next message re-caches 182k tokens.',
+    )
   })
 
   test('icons are same-sized grids drawn in their colour', async () => {
@@ -234,6 +251,10 @@ describe('prompt cache', () => {
       const ui = await mount(surface)
       expect(await ui.find({ type: 'Text', text: '58m' })).toBeDefined()
       expect(await ui.find({ type: surface === 'terminal' ? 'Image' : 'Svg', alt: surface === 'terminal' ? '🔥' : 'Prompt cache warm' } as never)).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /^Prompt cache warm for 58 more min/ })).toBeUndefined()
+      await ui.press({ key: 'cache-info' })
+      expect(await ui.find({ type: 'Text', text: /^Prompt cache warm for 58 more min \(1 h TTL, assumed\)/ })).toBeDefined()
+      await ui.press({ key: 'cache-info' })
       await ui.unmount()
     }
 
