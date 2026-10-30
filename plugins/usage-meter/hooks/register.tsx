@@ -334,6 +334,11 @@ async function currentBilling($: EngineInterface): Promise<BillingMode> {
   return resolveBilling(billingMode(await read($, usage), await read($, sessionCost)), await read($, knownBilling))
 }
 
+async function restoreCacheTtl($: EngineInterface) {
+  const ttl = await $.store.get('cacheTtl')
+  if (ttl === '5m' || ttl === '1h') await update($, cacheTtl, () => ttl)
+}
+
 async function tick($: EngineInterface) {
   const time = await $.clock.now()
   await update($, now, () => time)
@@ -350,8 +355,7 @@ export const register: Register = on => {
     await noteCost($, cost, { context, rateLimits })
     await tick($)
     await refreshModel($)
-    const ttl = await $.store.get('cacheTtl')
-    if (ttl === '5m' || ttl === '1h') await update($, cacheTtl, () => ttl)
+    await restoreCacheTtl($)
     $.clock.every(MINUTE, () => tick($))
     return result
   })
@@ -384,6 +388,8 @@ export const register: Register = on => {
   // A resumed or forked transcript's cache is as old as its last response;
   // /clear and /compact start the next request from nothing.
   on('classic.SessionStart', async ($, e, next) => {
+    // /clear and /resume reset state without a session.start.
+    await restoreCacheTtl($)
     if (e.source === 'clear' || e.source === 'compact') await update($, cacheAt, () => null)
     else if ((e.source === 'resume' || e.source === 'fork') && typeof e.seconds_since_last_response === 'number') {
       const time = await $.clock.now()
