@@ -5,6 +5,7 @@ export type Usage = {
 }
 export type CostView = 'session' | 'today' | '7d' | '30d'
 export type KnownBilling = 'subscription' | 'metered'
+export type CacheTtl = '5m' | '1h'
 export type GitState = { branch: string; isDirty: boolean; worktree: string | null; root: string | null }
 
 declare module 'claude-code' {
@@ -23,6 +24,8 @@ declare module 'claude-code' {
       knownBilling: KnownBilling | null
       dir: string | null
       worktreeOpen: boolean
+      cacheAt: number | null
+      cacheTtl: CacheTtl | null
     }
   }
 }

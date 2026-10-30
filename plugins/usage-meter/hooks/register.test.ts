@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { barFill, baseName, billingMode, resolveBilling, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, locationLabel, parseGitStatus, parseWorktree, percentLeft } from './register'
+import { barFill, baseName, billingMode, CACHE_ICONS, cacheState, cacheTtlMs, iconRgba, iconSvg, resolveBilling, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, locationLabel, parseGitStatus, parseWorktree, percentLeft } from './register'
 
 describe('usage-meter', () => {
   test('formats tokens like 10k/1M', async () => {
@@ -174,6 +174,74 @@ describe('worktree toggle', () => {
       await ui.press({ key: 'worktree-toggle' })
       expect(await ui.find({ type: 'Text', text: 'Worktree' })).toBeDefined()
       await ui.press({ key: 'worktree-toggle' })
+      await ui.unmount()
+    }
+  })
+})
+
+describe('prompt cache', () => {
+  const MIN = 60_000
+
+  test('counts whole minutes down to cold', async () => {
+    expect(cacheState(null, 0, 60 * MIN)).toBe(null)
+    expect(cacheState(0, 0, 60 * MIN)).toEqual({ mode: 'warm', minutesLeft: 60 })
+    expect(cacheState(0, 59 * MIN + 1, 60 * MIN)).toEqual({ mode: 'warm', minutesLeft: 1 })
+    expect(cacheState(0, 60 * MIN, 60 * MIN)).toEqual({ mode: 'cold', minutesLeft: 0 })
+    // A clock reading older than the request never shows more than the TTL.
+    expect(cacheState(10 * MIN, 0, 5 * MIN)).toEqual({ mode: 'warm', minutesLeft: 5 })
+  })
+
+  test('takes the TTL the engine named, else guesses from billing', async () => {
+    expect(cacheTtlMs('5m', 'subscription')).toBe(5 * MIN)
+    expect(cacheTtlMs('1h', 'metered')).toBe(60 * MIN)
+    expect(cacheTtlMs(null, 'metered')).toBe(5 * MIN)
+    expect(cacheTtlMs(null, 'subscription')).toBe(60 * MIN)
+    expect(cacheTtlMs(null, 'unknown')).toBe(60 * MIN)
+  })
+
+  test('icons are same-sized grids drawn in their colour', async () => {
+    for (const { rows, color } of Object.values(CACHE_ICONS)) {
+      expect(new Set(rows.map(r => r.length)).size).toBe(1)
+      const px = iconRgba(rows, color)
+      expect(px.length).toBe(rows.length * rows[0]!.length * 4)
+      const lit = rows.join('').split('').filter(c => c === '#').length
+      expect(px.filter((_, i) => i % 4 === 3 && px[i] === 255).length).toBe(lit)
+      expect(iconSvg(rows, color).match(/h1v1h-1z/g)?.length).toBe(lit)
+    }
+  })
+
+  test('shows fire with minutes left, then ice once cold', async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+    on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 10 }] } }) as never)
+    on('session.model', async () => ({ value: 'claude-opus-5-5' }) as never)
+    on('session.cwd', async () => ({ value: '/r' }) as never)
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    on('classic.SessionStart', async () => ({}) as never)
+    await $.session.start({ cwd: '/r', surface: 'terminal' } as never)
+
+    const mount = (surface: 'terminal' | 'desktop') =>
+      $.ui.mount({
+        plugin: 'usage-meter',
+        surface,
+        component: 'AbovePrompt',
+        props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120 } as never,
+      })
+
+    await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 120 } as never)
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const ui = await mount(surface)
+      expect(await ui.find({ type: 'Text', text: '58m' })).toBeDefined()
+      expect(await ui.find({ type: surface === 'terminal' ? 'Image' : 'Svg', alt: surface === 'terminal' ? '🔥' : 'Prompt cache warm' } as never)).toBeDefined()
+      await ui.unmount()
+    }
+
+    await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: 7200, prompt_cache_likely_expired: true } as never)
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const ui = await mount(surface)
+      expect(await ui.find({ type: 'Text', text: /^\d+m$/ })).toBeUndefined()
+      expect(await ui.find({ type: surface === 'terminal' ? 'Image' : 'Svg', alt: surface === 'terminal' ? '🧊' : 'Prompt cache cold' } as never)).toBeDefined()
       await ui.unmount()
     }
   })
