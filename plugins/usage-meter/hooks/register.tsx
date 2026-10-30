@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Color, EngineInterface, Register } from 'claude-code'
 
 import type { CacheTtl, CostView, GitState, KnownBilling, Usage } from '../types'
+import { rate } from './rates.mjs'
 
 const usage = atom({ plugin: 'usage-meter', key: 'usage' } as const, null)
 const now = atom({ plugin: 'usage-meter', key: 'now' } as const, null)
@@ -20,6 +21,7 @@ const worktreeOpen = atom({ plugin: 'usage-meter', key: 'worktreeOpen' } as cons
 // When the main thread last sent a request (clock ms).
 const cacheAt = atom({ plugin: 'usage-meter', key: 'cacheAt' } as const, null as number | null)
 const cacheTtl = atom({ plugin: 'usage-meter', key: 'cacheTtl' } as const, null as CacheTtl | null)
+const cacheInfo = atom({ plugin: 'usage-meter', key: 'cacheInfo' } as const, false)
 
 const BAR_CELLS = 10
 const CONTEXT_CELLS = BAR_CELLS * 2
@@ -87,9 +89,33 @@ export type CacheMode = 'warm' | 'cold'
 
 // The engine reports the TTL only around a model switch. Until one has been
 // seen, a subscription is taken to cache for an hour and a metered key for 5 minutes.
-export function cacheTtlMs(seen: CacheTtl | null, billing: BillingMode): number {
-  const ttl = seen ?? (billing === 'metered' ? '5m' : '1h')
+export function cacheTtlOf(seen: CacheTtl | null, billing: BillingMode): CacheTtl {
+  return seen ?? (billing === 'metered' ? '5m' : '1h')
+}
+
+export function cacheTtlMs(ttl: CacheTtl): number {
   return ttl === '5m' ? 5 * MINUTE : LONGEST_TTL
+}
+
+// List-price USD to write `tokens` of context back to the cache: a 1 h write
+// costs 2x input, a 5 min write 1.25x.
+export function recacheCost(model: string, tokens: number, ttl: CacheTtl, nowMs: number): number {
+  return (tokens * rate(model, tokens, nowMs).i * (ttl === '1h' ? 2 : 1.25)) / 1e6
+}
+
+// The one line the cache's ⓘ opens. Cost only where billing is per token.
+export function cacheExplanation(
+  cache: { mode: CacheMode; minutesLeft: number },
+  ttl: CacheTtl,
+  isTtlSeen: boolean,
+  tokens: number,
+  cost: number | null,
+): string {
+  const recache = `${formatTokens(tokens)} tokens${cost === null ? '' : `, ~$${cost.toFixed(2)}`}`
+  const lifetime = `${ttl === '1h' ? '1 h' : '5 min'} TTL${isTtlSeen ? '' : ', assumed'}`
+  return cache.mode === 'warm'
+    ? `Prompt cache warm for ${cache.minutesLeft} more min (${lifetime}). Once cold, the next message re-caches ${recache}.`
+    : `Prompt cache cold (${lifetime}): the next message re-caches ${recache}.`
 }
 
 // Stamped as the last request's time, this reads as cold under any TTL.
@@ -429,7 +455,10 @@ export const register: Register = on => {
     // Reading `now` redraws on the minute tick; the clock itself is read fresh,
     // since /clear and /resume reset `now` until the next tick.
     await read($, now)
-    const cache = cacheState(lastAt, await $.clock.now(), cacheTtlMs(await read($, cacheTtl), mode))
+    const seenTtl = await read($, cacheTtl)
+    const ttl = cacheTtlOf(seenTtl, mode)
+    const cache = cacheState(lastAt, await $.clock.now(), cacheTtlMs(ttl))
+    const isCacheInfo = !!cache && (await read($, cacheInfo))
 
     const { Box, Button, Text } = $.ui.resolve(e)
 
@@ -533,6 +562,7 @@ export const register: Register = on => {
               <Box key="cache" columnGap={1}>
                 {cacheIcon(cache.mode)}
                 {cache.mode === 'warm' && <Text dimColor>{`${cache.minutesLeft}m`}</Text>}
+                <Button key="cache-info" label={isCacheInfo ? 'ⓘ Hide' : 'ⓘ'} onPress={() => update($, cacheInfo, v => !v)} />
               </Box>
             )}
             {limits}
@@ -552,6 +582,19 @@ export const register: Register = on => {
                 <Text>{value}</Text>
               </Box>
             ))}
+          </Box>
+        )}
+        {cache && isCacheInfo && (
+          <Box alignSelf="flex-end">
+            <Text dimColor>
+              {cacheExplanation(
+                cache,
+                ttl,
+                seenTtl !== null,
+                u.context.tokens ?? 0,
+                isMetered && modelId ? recacheCost(modelId, u.context.tokens ?? 0, ttl, await $.clock.now()) : null,
+              )}
+            </Text>
           </Box>
         )}
         {isMetered && isInfo && (

@@ -26,6 +26,7 @@ declare module 'claude-code' {
       worktreeOpen: boolean
       cacheAt: number | null
       cacheTtl: CacheTtl | null
+      cacheInfo: boolean
     }
   }
 }
