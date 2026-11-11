@@ -7,7 +7,7 @@ A Claude Code mod that shows, around the prompt:
   - **Subscription:** 5-hour and weekly rate limits as bars with the percent left and time until reset. A `│` in each bar marks where an even spend would stand now; if the current rate would empty the window before it resets, `out in 1h20m` shows in yellow. Nothing is projected until a tenth of the window has passed.
   - **Spend limit:** where Claude Code reports one (`spend_limit`, e.g. a gateway or Enterprise cap), a `Limit` bar with the percent left and time until reset sits beside the cost. No pace tick for it, since the window length isn't known.
   - **Pay-per-token:** a `Cost` control. Press the period button to switch between Session, Today, 7 days and 30 days (the list opens on the right, below the meter); `ⓘ` explains how the estimate works.
-- **Below:** context as a bar twice as wide as the limit bars (fills as the window is used; green, then yellow, then red as little is left), with used/window beside it.
+- **Below:** context as a bar twice as wide as the limit bars (fills as the window is used; green, then yellow, then red as little is left), with used/window beside it. From 60% full, with a few turns of history, `~12 turns left` estimates how many more fit at the recent growth per turn (yellow at 10 or fewer). A `/clear` or `/compact` starts the estimate over.
 
 ## Subscription or metered?
 

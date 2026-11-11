@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { barFill, baseName, billingMode, CACHE_ICONS, cacheExplanation, cacheState, cacheTtlMs, cacheTtlOf, recacheCost, iconRgba, iconSvg, resolveBilling, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, locationLabel, parseGitStatus, parseWorktree, percentLeft, pace, markTick } from './register'
+import { barFill, baseName, billingMode, CACHE_ICONS, cacheExplanation, cacheState, cacheTtlMs, cacheTtlOf, recacheCost, iconRgba, iconSvg, resolveBilling, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, locationLabel, parseGitStatus, parseWorktree, percentLeft, pace, markTick, trailAdd, turnsLeft } from './register'
 
 describe('usage-meter', () => {
   test('formats tokens like 10k/1M', async () => {
@@ -340,5 +340,28 @@ describe('spend limit', () => {
     expect(percentLeft('spend_limit', u)).toBe(38)
     expect(pace('spend_limit', u, Date.parse('2026-11-11T00:00:00Z'))).toBe(null)
     expect(billingMode(u, 1)).toBe('metered')
+  })
+})
+
+describe('context turns left', () => {
+  const u = (tokens: number) => ({ context: { tokens, window: 1000 }, rateLimits: [] })
+
+  test('trail skips repeats, caps its length and restarts on a drop', () => {
+    expect(trailAdd([100, 200], 200)).toEqual([100, 200])
+    expect(trailAdd([100, 200], 300)).toEqual([100, 200, 300])
+    expect(trailAdd([1, 2, 3, 4, 5, 6, 7, 8], 9)).toEqual([2, 3, 4, 5, 6, 7, 8, 9])
+    expect(trailAdd([100, 200], 50)).toEqual([50])
+    expect(trailAdd([], 50)).toEqual([50])
+  })
+
+  test('divides the free window by the average growth', () => {
+    expect(turnsLeft([600, 650, 700], u(700))).toBe(6)
+  })
+
+  test('says nothing early, with a short trail, or when not growing', () => {
+    expect(turnsLeft([400, 450, 500], u(500))).toBe(null)
+    expect(turnsLeft([650, 700], u(700))).toBe(null)
+    expect(turnsLeft([700, 700, 700], u(700))).toBe(null)
+    expect(turnsLeft([600, 650, 700], { context: { window: 0 }, rateLimits: [] })).toBe(null)
   })
 })

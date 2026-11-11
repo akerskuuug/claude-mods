@@ -27,6 +27,7 @@ declare module 'claude-code' {
       cacheAt: number | null
       cacheTtl: CacheTtl | null
       cacheInfo: boolean
+      contextTrail: number[]
     }
   }
 }

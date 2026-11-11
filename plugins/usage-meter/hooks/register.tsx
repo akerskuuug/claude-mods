@@ -23,6 +23,9 @@ const cacheAt = atom({ plugin: 'usage-meter', key: 'cacheAt' } as const, null as
 const cacheTtl = atom({ plugin: 'usage-meter', key: 'cacheTtl' } as const, null as CacheTtl | null)
 const cacheInfo = atom({ plugin: 'usage-meter', key: 'cacheInfo' } as const, false)
 
+// Recent context sizes (tokens), one per change, for estimating turns left.
+const contextTrail = atom({ plugin: 'usage-meter', key: 'contextTrail' } as const, [] as number[])
+
 const BAR_CELLS = 10
 const CONTEXT_CELLS = BAR_CELLS * 2
 // Dark-terminal track colour; ThemeKey has no neutral background.
@@ -284,6 +287,31 @@ export function contextLeft(u: Usage): number {
   return Math.max(0, Math.min(100, Math.round(100 - used)))
 }
 
+const TRAIL_MAX = 8
+const TRAIL_MIN = 3
+const HINT_MIN_USED = 60
+const HINT_URGENT = 10
+
+// Adds a context size to the trail. Unchanged sizes are skipped, and a drop
+// (/clear, /compact) starts the trail over.
+export function trailAdd(trail: number[], tokens: number): number[] {
+  const last = trail[trail.length - 1]
+  if (last === tokens) return trail
+  if (last === undefined || tokens < last) return [tokens]
+  return [...trail, tokens].slice(-TRAIL_MAX)
+}
+
+// How many more turns fit at the recent growth per turn. Null until the window
+// is HINT_MIN_USED% full and the trail has TRAIL_MIN sizes, or if it isn't growing.
+export function turnsLeft(trail: number[], u: Usage): number | null {
+  const tokens = u.context.tokens ?? 0
+  if (u.context.window <= 0 || (tokens / u.context.window) * 100 < HINT_MIN_USED) return null
+  if (trail.length < TRAIL_MIN) return null
+  const growth = (trail[trail.length - 1] - trail[0]) / (trail.length - 1)
+  if (growth <= 0) return null
+  return Math.max(0, Math.floor((u.context.window - tokens) / growth))
+}
+
 // A bar with no text inside: just the filled and empty runs.
 export function barFill(left: number, cells: number): { filled: string; empty: string } {
   const filledCount = Math.round((left / 100) * cells)
@@ -423,6 +451,7 @@ export const register: Register = on => {
   on('session.measure', async ($, e, next) => {
     const u = { context: e.context, rateLimits: e.rateLimits }
     await update($, usage, () => u)
+    await update($, contextTrail, t => trailAdd(t, e.context.tokens ?? 0))
     await noteCost($, e.cost, u)
     return next(e)
   })
@@ -683,6 +712,7 @@ export const register: Register = on => {
     const { Box, Text } = $.ui.resolve(e)
 
     const left = contextLeft(u)
+    const turns = turnsLeft(await read($, contextTrail), u)
     // Fills as the window is used; the colour still turns red as little is left.
     const { filled, empty } = barFill(100 - left, CONTEXT_CELLS)
 
@@ -695,6 +725,11 @@ export const register: Register = on => {
           {' '}
           {formatTokens(u.context.tokens ?? 0)}/{formatTokens(u.context.window)}
         </Text>
+        {turns !== null && (
+          <Text color={turns <= HINT_URGENT ? 'warning' : undefined} dimColor={turns > HINT_URGENT}>
+            {' '}· ~{turns} {turns === 1 ? 'turn' : 'turns'} left
+          </Text>
+        )}
       </Box>
     )
   })
