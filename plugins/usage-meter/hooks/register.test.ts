@@ -333,3 +333,12 @@ describe('pace tick', () => {
     expect(markTick(bar, 50, '50%')).toEqual(bar)
   })
 })
+
+describe('spend limit', () => {
+  test('reads as percent left and gets no pace', () => {
+    const u = { context: { window: 1 }, rateLimits: [{ kind: 'spend_limit', percentUsed: 62, resetsAt: '2026-11-30T00:00:00Z' }] }
+    expect(percentLeft('spend_limit', u)).toBe(38)
+    expect(pace('spend_limit', u, Date.parse('2026-11-11T00:00:00Z'))).toBe(null)
+    expect(billingMode(u, 1)).toBe('metered')
+  })
+})

@@ -543,8 +543,10 @@ export const register: Register = on => {
     const estimated = current !== 'session'
 
     // Subscription: the two limit bars. Metered: the cost control. Unknown: nothing yet.
+    const spendLimit = u.rateLimits.some(r => r.kind === 'spend_limit') ? meter('Limit', 'spend_limit', await read($, now)) : null
     const limits = mode === 'unknown' ? null : isMetered ? (
-      <Box key="cost" columnGap={1}>
+      <Box key="cost" columnGap={3}>
+        <Box key="cost-control" columnGap={1}>
         <Text dimColor>Cost</Text>
         <Button
           key="cost-toggle"
@@ -557,6 +559,8 @@ export const register: Register = on => {
           {estimated ? ' est.' : ''}
         </Text>
         <Button key="cost-info" hotkey="i" label={isInfo ? 'ⓘ Hide' : 'ⓘ'} onPress={() => update($, costInfo, v => !v)} />
+        </Box>
+        {spendLimit}
       </Box>
     ) : (
       <Box key="limits" columnGap={3}>
