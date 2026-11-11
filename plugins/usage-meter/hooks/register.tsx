@@ -550,7 +550,7 @@ export const register: Register = on => {
       const resetIn = formatResetIn(u.rateLimits.find(r => r.kind === kind)?.resetsAt, nowMs)
       const outIn = pacing?.hitInMs != null && nowMs !== null ? formatResetIn(new Date(nowMs + pacing.hitInMs).toISOString(), nowMs) : null
       return (
-        <Box key={kind}>
+        <Box key={kind} flexShrink={0}>
           <Text dimColor>{label} </Text>
           <Text color="inverseText" backgroundColor={barColor(left)} bold>
             {filled}
@@ -574,7 +574,7 @@ export const register: Register = on => {
     // Subscription: the two limit bars. Metered: the cost control. Unknown: nothing yet.
     const spendLimit = u.rateLimits.some(r => r.kind === 'spend_limit') ? meter('Limit', 'spend_limit', await read($, now)) : null
     const limits = mode === 'unknown' ? null : isMetered ? (
-      <Box key="cost" columnGap={3}>
+      <Box key="cost" columnGap={3} flexWrap="wrap" alignItems="center">
         <Box key="cost-control" columnGap={1}>
         <Text dimColor>Cost</Text>
         <Button
@@ -592,7 +592,7 @@ export const register: Register = on => {
         {spendLimit}
       </Box>
     ) : (
-      <Box key="limits" columnGap={3}>
+      <Box key="limits" columnGap={3} flexWrap="wrap" alignItems="center">
         {meter('5h', 'five_hour', await read($, now))}
         {meter('Weekly', 'seven_day', await read($, now))}
       </Box>
@@ -603,7 +603,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Box flexDirection="row" width={e.props.bodyColumns} justifyContent="space-between" columnGap={3}>
+        <Box flexDirection="row" width={e.props.bodyColumns} justifyContent="space-between" columnGap={3} rowGap={1} flexWrap="wrap" alignItems="center">
           {repo || dirName ? (
             <Box key="git" flexShrink={1} minWidth={0} columnGap={1}>
               {repo?.worktree && (
@@ -624,7 +624,7 @@ export const register: Register = on => {
           ) : (
             <Text key="git"> </Text>
           )}
-          <Box key="right" columnGap={3} flexShrink={0}>
+          <Box key="right" columnGap={3} rowGap={1} flexShrink={1} flexWrap="wrap" alignItems="center" justifyContent="flex-end">
             {modelId && (
               <Box key="model">
                 <Text color="claude">{formatModel(modelId)}</Text>
