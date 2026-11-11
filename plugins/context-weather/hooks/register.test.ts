@@ -15,6 +15,7 @@ import {
   rainfall,
   visitLength,
   visitorFor,
+  visitorOdds,
   visitorNamed,
 } from './register'
 import type { VisitorKind } from './register'
@@ -289,27 +290,42 @@ describe('visitors', () => {
   const visit = (kind: VisitorKind, start = 100) => ({ kind, start, seed: 42 })
 
   test('come only in their weather', async () => {
-    expect(visitorFor(0.95, 12)).toBe('cow')
-    expect(visitorFor(0.95, 2)).toBe('cow')
-    expect(visitorFor(0, 2)).toBe('star')
-    expect(visitorFor(0.1, 12)).toBe('birds')
-    expect(visitorFor(0.24, 2, 0.2)).toBe('star')
-    expect(visitorFor(0.25, 2, 0.2)).toBe('plane')
-    expect(visitorFor(0.29, 2, 0.2)).toBe('plane')
-    expect(visitorFor(0.4, 12, 0.2)).toBe('kite')
-    expect(visitorFor(0.4, 12, 0.8)).toBe('plane')
-    expect(visitorFor(0.4, 2, 0.2)).toBe('plane')
-    expect(visitorFor(0.7, 2, 0.2)).toBe('umbrella')
-    expect(visitorFor(0.7, 12, 0.8)).toBe('duck')
-    expect(visitorFor(0.1, 6)).toBe('cat')
-    expect(visitorFor(0.1, 20)).toBe('cat')
-    expect(visitorFor(0.1, 6, 0, false)).toBe('birds')
-    expect(visitorFor(0.1, 20, 0, false)).toBe('birds')
-    expect(visitorFor(0, 2, 0.8)).toBe('owl')
-    expect(visitorFor(0, 2, 0.8, false)).toBe('star')
-    expect(visitorFor(0.4, 2, 0.8)).toBe('owl')
-    expect(visitorFor(0.4, 2, 0.8, false)).toBe('plane')
+    const who = (s: number, hour: number, hasHouse = true) => visitorOdds(s, hour, hasHouse).map(([k]) => k)
+    expect(who(0.95, 12)).toEqual(['cow', 'bike', 'door', 'lost-umbrella'])
+    expect(who(0.95, 2)).toEqual(['cow', 'bike', 'door', 'lost-umbrella'])
+    expect(who(0.7, 2)).toEqual(['umbrella', 'duck'])
+    expect(who(0.1, 12)).toEqual(['birds', 'butterfly', 'dog-walker', 'cyclist', 'balloon', 'ufo'])
+    expect(who(0.1, 6)).toEqual(['cat', 'birds', 'balloon'])
+    expect(who(0.1, 6, false)).toEqual(['birds', 'balloon'])
+    expect(who(0.1, 20)).toEqual(['cat', 'bats', 'fireflies', 'ufo'])
+    expect(who(0.1, 20, false)).toEqual(['birds', 'bats', 'fireflies', 'ufo'])
+    expect(who(0, 2)).toEqual(['star', 'owl', 'satellite', 'fireflies', 'aurora', 'ufo'])
+    expect(who(0, 2, false)).toEqual(['star', 'satellite', 'fireflies', 'aurora', 'ufo'])
+    expect(who(0.3, 12)).toEqual(['kite', 'plane', 'geese', 'balloon', 'ufo'])
+    expect(who(0.5, 12)).toEqual(['kite', 'plane', 'geese'])
+    expect(who(0.3, 8)).toContain('plane')
+    expect(who(0.4, 2)).toEqual(['plane', 'owl'])
+    expect(who(0.4, 2, false)).toEqual(['plane'])
+  })
+
+  test('rare ones are rare', async () => {
+    const share = (s: number, hour: number, kind: VisitorKind) => {
+      const odds = visitorOdds(s, hour)
+      return (odds.find(([k]) => k === kind)?.[1] ?? 0) / odds.reduce((sum, [, n]) => sum + n, 0)
+    }
+    expect(share(0.1, 12, 'ufo')).toBeLessThan(0.02)
+    expect(share(0, 2, 'ufo')).toBeLessThan(0.02)
+    expect(share(0, 2, 'aurora')).toBeLessThan(0.06)
+    expect(share(0, 2, 'aurora')).toBeGreaterThan(0)
+  })
+
+  test('are picked by the odds, and not twice running', async () => {
     expect([0, 0.3, 0.6, 0.9].map(roll => visitorFor(0.95, 12, roll))).toEqual(['cow', 'bike', 'door', 'lost-umbrella'])
+    expect(visitorFor(0.1, 12, 0)).toBe('birds')
+    expect(visitorFor(0.1, 12, 1)).toBe('ufo')
+    expect(visitorFor(0.7, 12, 0, true, 'umbrella')).toBe('duck')
+    for (let roll = 0; roll <= 1; roll += 0.05) expect(visitorFor(0.1, 12, roll, true, 'birds')).not.toBe('birds')
+    expect(visitorFor(0.4, 2, 0.5, false, 'plane')).toBe('plane')
   })
 
   test('answer to other names', async () => {
@@ -320,6 +336,11 @@ describe('visitors', () => {
     expect(visitorNamed('duck')).toBe('duck')
     expect(visitorNamed('bicycle')).toBe('bike')
     expect(visitorNamed('brolly')).toBe('lost-umbrella')
+    expect(visitorNamed('dog')).toBe('dog-walker')
+    expect(visitorNamed('northern-lights')).toBe('aurora')
+    expect(visitorNamed('goose')).toBe('geese')
+    expect(visitorNamed('saucer')).toBe('ufo')
+    expect(visitorNamed('rider')).toBe('cyclist')
     expect(visitorNamed('dragon')).toBe(null)
   })
 
@@ -355,6 +376,31 @@ describe('visitors', () => {
     expect(Array.from({ length: 8 }, (_, i) => beacon(130 + i)).some(Boolean)).toBe(true)
   })
 
+  test('a balloon drifts over, its stripes showing', async () => {
+    const stripe = 0xd84a3a
+    expect(paint(32, 40, 0.1, 350, 12).includes(stripe)).toBe(false)
+    expect(paint(32, 40, 0.1, 350, 12, visit('balloon')).includes(stripe)).toBe(true)
+    expect(paint(32, 40, 0.1, 100 + visitLength('balloon', 32), 12, visit('balloon')).includes(stripe)).toBe(false)
+  })
+
+  test('a satellite glides across, steady and unblinking', async () => {
+    const length = visitLength('satellite', 32)
+    const withSat = (f: number) => paint(32, 40, 0, f, 2, visit('satellite'))
+    const sky = (f: number) => paint(32, 40, 0, f, 2)
+    expect(Array.from(withSat(100 + Math.floor(length / 2)))).not.toEqual(Array.from(sky(100 + Math.floor(length / 2))))
+    expect(Array.from(withSat(100 + length))).toEqual(Array.from(sky(100 + length)))
+  })
+
+  test('the northern lights ripple over the top of a clear night', async () => {
+    const sky = paint(32, 40, 0, 400, 2)
+    const lit = paint(32, 40, 0, 400, 2, visit('aurora'))
+    const changed = [...sky.keys()].filter(i => sky[i] !== lit[i])
+    expect(changed.length).toBeGreaterThan(100)
+    expect(changed.every(i => Math.floor(i / 32) < 14)).toBe(true)
+    const end = 100 + visitLength('aurora', 32)
+    expect(Array.from(paint(32, 40, 0, end, 2, visit('aurora')))).toEqual(Array.from(paint(32, 40, 0, end, 2)))
+  })
+
   test('a kite goes up, and comes down again', async () => {
     const heart = (f: number) => paint(32, 40, 0.4, f, 12, visit('kite')).includes(0xf2c94c)
     expect(heart(250)).toBe(true)
@@ -382,6 +428,35 @@ describe('visitors', () => {
     const feet = (f: number) => where(paint(32, 40, 0.7, f, 12, visit('duck')), 0xd8862a, 32).map(p => p.y)
     expect(feet(150).length).toBeGreaterThan(0)
     expect(new Set([...feet(150), ...feet(154)])).toEqual(new Set([groundLine(40) - 1]))
+  })
+
+  test('a butterfly flutters by, its wings opening and closing', async () => {
+    const wings = (f: number) => where(paint(32, 40, 0, f, 12, visit('butterfly')), 0xf08a24, 32)
+    // Clear of the house's roof, whichever way it is heading.
+    expect(paint(32, 40, 0, 200, 12).includes(0xf08a24)).toBe(false)
+    expect(paint(32, 40, 0, 200, 12, visit('butterfly')).includes(0xf08a24)).toBe(true)
+    expect(wings(200).length).toBe(2)
+    expect(wings(202).length).toBe(1)
+    expect(paint(32, 40, 0, 100 + visitLength('butterfly', 32), 12, visit('butterfly')).includes(0xf08a24)).toBe(false)
+  })
+
+  test('a dog-walker goes out with the dog trotting ahead', async () => {
+    expect(paint(32, 40, 0, 120, 12).includes(0xb07a4a)).toBe(false)
+    expect(paint(32, 40, 0, 120, 12, visit('dog-walker')).includes(0xb07a4a)).toBe(true)
+    expect(paint(32, 40, 0, 100 + visitLength('dog-walker', 32), 12, visit('dog-walker')).includes(0xb07a4a)).toBe(false)
+  })
+
+  test('the dog stands on its feet, on the ground', async () => {
+    const feet = (f: number) => where(paint(32, 40, 0, f, 12, visit('dog-walker')), 0xb07a4a, 32).map(p => p.y)
+    for (const f of [120, 121, 124]) {
+      expect(new Set(feet(f))).toEqual(new Set([groundLine(40) - 2, groundLine(40) - 1]))
+    }
+  })
+
+  test('a cyclist rolls across on a blue bike', async () => {
+    expect(paint(32, 40, 0, 160, 12).includes(0x3a8ad0)).toBe(false)
+    expect(paint(32, 40, 0, 160, 12, visit('cyclist')).includes(0x3a8ad0)).toBe(true)
+    expect(paint(32, 40, 0, 100 + visitLength('cyclist', 32), 12, visit('cyclist')).includes(0x3a8ad0)).toBe(false)
   })
 
   test('the storm blows a bike, a shed door and a lost umbrella past', async () => {
@@ -423,6 +498,48 @@ describe('visitors', () => {
     expect(withOwl.includes(0xffd23a)).toBe(true)
   })
 
+  test('bats flap across the dusk, and are gone before their visit ends', async () => {
+    const end = 100 + visitLength('bats', 32)
+    expect(Array.from(paint(32, 40, 0, 150, 20, visit('bats')))).not.toEqual(Array.from(paint(32, 40, 0, 150, 20)))
+    expect(Array.from(paint(32, 40, 0, end - 1, 20, visit('bats')))).toEqual(Array.from(paint(32, 40, 0, end - 1, 20)))
+    expect(Array.from(paint(32, 40, 0, end, 20, visit('bats')))).toEqual(Array.from(paint(32, 40, 0, end, 20)))
+  })
+
+  test('fireflies blink low over the grass, and fade away', async () => {
+    const changed = (f: number) => {
+      const base = paint(32, 40, 0, f, 2)
+      const flies = paint(32, 40, 0, f, 2, visit('fireflies'))
+      return [...base.keys()].filter(i => base[i] !== flies[i])
+    }
+    const frames = [130, 131, 132, 133, 134, 135, 136, 137].map(changed)
+    expect(frames.some(c => c.length > 0)).toBe(true)
+    expect(new Set(frames.map(c => c.length)).size).toBeGreaterThan(1)
+    for (const c of frames) for (const i of c) expect(Math.floor(i / 32)).toBeGreaterThanOrEqual(groundLine(40) - 6)
+    const end = 100 + visitLength('fireflies', 32)
+    expect(Array.from(paint(32, 40, 0, end, 2, visit('fireflies')))).toEqual(Array.from(paint(32, 40, 0, end, 2)))
+  })
+
+  test('geese fly over in a V, and are gone at the end', async () => {
+    const goose = 0x4a4038
+    const geese = (f: number) => where(paint(32, 40, 0.3, f, 12, visit('geese')), goose, 32)
+    expect(paint(32, 40, 0.3, 180, 12).includes(goose)).toBe(false)
+    expect(geese(180).length).toBeGreaterThanOrEqual(20)
+    expect(geese(100 + visitLength('geese', 32)).length).toBe(0)
+  })
+
+  test('a saucer glides in, shines a beam at the grass, then zips off', async () => {
+    const rim = 0x9098a8
+    const row = groundLine(40) - 1
+    const hover = paint(32, 40, 0, 160, 12, visit('ufo'))
+    expect(hover.includes(rim)).toBe(true)
+    const base = paint(32, 40, 0, 205, 12)
+    const beam = paint(32, 40, 0, 205, 12, visit('ufo'))
+    const changed = [...base.keys()].filter(i => base[i] !== beam[i])
+    expect(changed.some(i => Math.floor(i / 32) === row)).toBe(true)
+    const end = 100 + visitLength('ufo', 32)
+    expect(paint(32, 40, 0, end, 12, visit('ufo')).includes(rim)).toBe(false)
+  })
+
   test('/weather visit sends one by, and names who can come', async ($, on) => {
     mock.clock(on)
     on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
@@ -433,7 +550,7 @@ describe('visitors', () => {
     expect((await $.command.run({ command: 'weather', args: 'visit cow' })).text).toBe('Here comes a cow.')
     expect((await $.command.run({ command: 'weather', args: 'visit stars' })).text).toBe('Here comes a shooting star.')
     expect((await $.command.run({ command: 'weather', args: 'visit dragon' })).text).toBe(
-      'Nobody called dragon visits. Try birds, cat, star, owl, kite, plane, umbrella, duck, cow, bike, door, lost-umbrella.',
+      'Nobody called dragon visits. Try birds, cat, star, owl, kite, plane, umbrella, duck, cow, bike, door, lost-umbrella, butterfly, dog-walker, cyclist, balloon, satellite, aurora, bats, fireflies, geese, ufo.',
     )
   })
 

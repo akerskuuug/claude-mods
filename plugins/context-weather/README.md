@@ -30,12 +30,15 @@ Every 3 to 8 minutes, at random, someone may pass through, if the weather suits 
 
 | Weather | Visitor |
 | --- | --- |
-| clear or fair, by day | a few birds flapping across |
-| clear or fair, at dawn and dusk | a cat, who climbs to the roof's peak, sits a while and goes on |
-| clear or fair, at night | a shooting star, or an owl on the roof, blinking and looking about |
-| partly cloudy or overcast | someone flying a kite by the house (by day), a far-off plane with a blinking beacon, or at night the owl |
+| clear or fair, by day | a few birds flapping across, a butterfly, someone walking their dog, a cyclist, or a hot-air balloon drifting over |
+| clear or fair, at dawn | a cat, who climbs to the roof's peak, sits a while and goes on; birds; or a hot-air balloon |
+| clear or fair, at dusk | the cat, bats flitting about, or fireflies blinking over the grass |
+| clear or fair, at night | a shooting star, an owl on the roof, a satellite gliding over, fireflies, or now and then the northern lights |
+| partly cloudy or overcast | someone flying a kite by the house (by day), a far-off plane with a blinking beacon, geese flying in a V, a balloon while it is only partly cloudy, or at night the owl |
 | rain | someone walking out under an umbrella, which blows inside out in heavy rain and sends them running; or a duck, waddling through |
 | thunderstorm | whatever the gale picked up, tumbling past: a bike, a shed door, the umbrella someone lost, or (one time in four) a cow |
+
+Some are commoner than others, and the same visitor never comes twice running when someone else could. Once in a long while, in a calm sky, something stranger stops by.
 
 A visitor who arrives stays until they are out of sight, even if the weather changes.
 
@@ -43,7 +46,7 @@ A visitor who arrives stays until they are out of sight, even if the weather cha
 
 - `/weather` opens or closes the window.
 - `/weather at 22:30` shows that time of day instead of the clock (handy for a preview); `/weather at now` follows the clock again.
-- `/weather visit cow` sends a visitor by now, whatever the weather: `birds`, `cat`, `star`, `owl`, `kite`, `plane`, `umbrella`, `duck`, `cow`, `bike`, `door` or `lost-umbrella` (plurals and a few other names work too).
+- `/weather visit cow` sends a visitor by now, whatever the weather: `birds`, `cat`, `star`, `owl`, `kite`, `plane`, `umbrella`, `duck`, `cow`, `bike`, `door`, `lost-umbrella`, `butterfly`, `dog`, `cyclist`, `balloon`, `satellite`, `aurora`, `bats`, `fireflies`, `geese` or `ufo` (plurals and a few other names work too).
 
 ## Where it shows
 

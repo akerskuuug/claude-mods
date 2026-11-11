@@ -123,6 +123,16 @@ export const VISITORS = [
   'bike',
   'door',
   'lost-umbrella',
+  'butterfly',
+  'dog-walker',
+  'cyclist',
+  'balloon',
+  'satellite',
+  'aurora',
+  'bats',
+  'fireflies',
+  'geese',
+  'ufo',
 ] as const
 export type VisitorKind = (typeof VISITORS)[number]
 export type Visitor = { kind: VisitorKind; start: number; seed: number }
@@ -158,21 +168,49 @@ export function nextGap(roll: number): number {
   return Math.round(GAP_MIN + clamp01(roll) * (GAP_MAX - GAP_MIN))
 }
 
-const pick = <T,>(list: readonly T[], roll: number): T => list[Math.min(list.length - 1, Math.floor(roll * list.length))]!
+// Odds for a rare treat, against the 1 to 3 of everyone else.
+const RARE = 0.15
+// Where partly cloudy turns overcast: balloons and saucers stay home from here.
+const OVERCAST = 0.45
 
-/** Who visits this sky; `roll` (0..1) picks where several might. */
-export function visitorFor(s: number, hour: number, roll = 0, hasHouse = true): VisitorKind {
-  if (s >= STORM) return pick(STORM_VISITORS, roll)
-  if (s >= RAIN) return roll < 0.5 ? 'umbrella' : 'duck'
+/** Who might visit this sky, each with its odds; only those that suit it are listed. */
+export function visitorOdds(s: number, hour: number, hasHouse = true): [VisitorKind, number][] {
+  if (s >= STORM) return STORM_VISITORS.map(k => [k, 1])
+  if (s >= RAIN) return [['umbrella', 1], ['duck', 1]]
   const phase = dayPhase(hour)
-  if (s < 0.25 && (phase === 'dawn' || phase === 'dusk')) return hasHouse ? 'cat' : 'birds'
   const light = daylight(hour)
-  if (light < 0.3) {
-    if (!hasHouse) return s < 0.25 ? 'star' : 'plane'
-    return roll < 0.5 ? (s < 0.25 ? 'star' : 'plane') : 'owl'
+  const odds: [VisitorKind, number | false][] =
+    s < 0.25
+      ? phase === 'dawn'
+        ? [[hasHouse ? 'cat' : 'birds', 3], ['birds', hasHouse && 1], ['balloon', 1.5]]
+        : phase === 'dusk'
+          ? [[hasHouse ? 'cat' : 'birds', 3], ['bats', 2], ['fireflies', 2], ['ufo', RARE]]
+          : light < 0.3
+            ? [['star', 3], ['owl', hasHouse && 2], ['satellite', 2], ['fireflies', 1], ['aurora', 0.4], ['ufo', RARE]]
+            : [['birds', 3], ['butterfly', 2], ['dog-walker', 2], ['cyclist', 2], ['balloon', 1], ['ufo', RARE]]
+      : light < 0.3
+        ? [['plane', 1], ['owl', hasHouse && 1]]
+        : [
+            ['kite', light > 0.6 && 2],
+            ['plane', 2],
+            ['geese', 1.5],
+            ['balloon', s < OVERCAST && 1.5],
+            ['ufo', s < OVERCAST && RARE],
+          ]
+  return odds.filter((o): o is [VisitorKind, number] => o[1] !== false)
+}
+
+/** Who visits this sky; `roll` (0..1) picks by the odds, and `last` is not asked back at once. */
+export function visitorFor(s: number, hour: number, roll = 0, hasHouse = true, last: VisitorKind | null = null): VisitorKind {
+  const all = visitorOdds(s, hour, hasHouse)
+  const odds = all.length > 1 ? all.filter(([k]) => k !== last) : all
+  const total = odds.reduce((sum, [, n]) => sum + n, 0)
+  let at = clamp01(roll) * total
+  for (const [kind, n] of odds) {
+    if (at < n) return kind
+    at -= n
   }
-  if (s >= 0.25) return light > 0.6 && roll < 0.5 ? 'kite' : 'plane'
-  return 'birds'
+  return odds[odds.length - 1]![0]
 }
 
 /** How many frames a visit lasts in a scene `w` pixels wide: until it is out of sight. */
@@ -295,6 +333,81 @@ const OWL = ['B.B', 'BBB', 'BBB']
 const OWL_COLORS: Record<string, number> = { B: 0x6b5440 }
 const OWL_EYES = 0xffd23a
 const OWL_LOOKS = [[0, 2], [0, 1], [1, 2]] // eyes ahead, left, right
+// A butterfly, 3 by 2: Wings open or folded over a dark Body.
+const BUTTERFLY_OPEN = ['W.W', '.B.']
+const BUTTERFLY_CLOSED = ['.W.', '.B.']
+const BUTTERFLY_COLORS: Record<string, number> = { W: 0xf08a24, B: 0x2b2420 }
+const BUTTERFLY_SPEED = 0.18
+// A dog trotting right, 3 by 2: a brown Dog with a dark Nose, its legs stepping. Sniffing, the nose goes down.
+const DOG_TROT = [
+  ['DDN', 'D.D'],
+  ['DDN', '.DD'],
+]
+const DOG_SNIFF = ['DD.', 'DDN']
+const DOG_COLORS: Record<string, number> = { D: 0xb07a4a, N: 0x2b2420 }
+const DOG_LEAD = 4 // how far ahead of its walker the dog trots
+const LEASH = 0x5a4632
+const DOG_SNIFF_EVERY = 60 // frames between sniffs
+const DOG_SNIFF_FOR = 12 // frames a sniff lasts; the walker stops with the dog
+const DOG_PACE = 1 - DOG_SNIFF_FOR / DOG_SNIFF_EVERY // the share of frames spent walking
+// A bike, 5 by 3, facing right: a blue Frame, black Wheels, and Spokes that turn between the two frames.
+const BIKE_ROLL = [
+  ['..FF.', 'FFFFF', 'WW.WW'],
+  ['..FF.', 'FFFFF', 'WS.SW'],
+]
+const BIKE_COLORS: Record<string, number> = { F: 0x3a8ad0, W: 0x1e1e1e, S: 0x9aa0a8 }
+const CYCLE_SPEED = 0.45
+// A hot-air balloon, 5 by 7: a red and cream striped Envelope, two rope pixels, and a brown Basket.
+const BALLOON = ['.CRC.', 'RCRCR', 'RCRCR', 'RCRCR', '.CRC.', '.K.K.', '.BBB.']
+const BALLOON_COLORS: Record<string, number> = { R: 0xd84a3a, C: 0xf2d27a, K: LEASH, B: 0x8a5a34 }
+const BALLOON_SPEED = 0.1 // pixels per frame: steady, so a change in the weather does not jolt it
+// A satellite: a steady, faint, white-ish dot.
+const SAT_COLOR = 0xe8eef8
+const SAT_ALPHA = 0.8
+const SAT_SPEED = 0.15 // pixels per frame
+const SAT_SLOPE = 0.3 // at most this far up or down per pixel travelled
+// The northern lights: a curtain of green, shading to violet at the top.
+const AURORA_FRAMES = 600 // 75 seconds
+const AURORA_FADE = 80 // frames for the lights to come in, and as many to go out
+const AURORA_ALPHA = 0.6 // the brightest they get, kept low so the stars still read
+const AURORA_GREEN = 0x4cf0a0
+const AURORA_VIOLET = 0x9a6cf0
+// Bats, 3 by 2: wings up, then down. Very dark, so they show against the dusk.
+const BAT_UP = ['B.B', '.B.']
+const BAT_DOWN = ['.B.', 'B.B']
+const BAT_COLORS: Record<string, number> = { B: 0x1c1820 }
+const BAT_SPEED = 0.5 // pixels per frame
+const BAT_DY = [0, -2, 2] // the bats fly a few pixels apart, one above another
+// Fireflies: single dots over the grass, each blinking on its own beat.
+const FIREFLY = 0xd8f060
+const FIREFLY_FRAMES = 240 // 30 seconds
+const FIREFLY_FADE = 32 // frames to fade in, and as many to fade out
+const FIREFLY_CYCLE = 24 // frames per blink
+const FIREFLY_ON = 0.6 // the share of each blink that is lit
+// Geese, 5 by 2: wings up, or level, over a dark Goose with a white breast. They fly in a V.
+const GOOSE_UP = ['G...G', '.GWG.']
+const GOOSE_LEVEL = ['.....', 'GGWGG']
+const GOOSE_COLORS: Record<string, number> = { G: 0x4a4038, W: 0xf0ece0 }
+const GOOSE_SPEED = 0.25 // pixels per frame
+const GOOSE_BACK = 3 // pixels each pair of geese falls behind the pair ahead
+const GOOSE_STEP = 2 // pixels up or down per pair, alternating sides
+// A saucer, 5 by 2: a pale Dome over a metal Rim, its two lights sitting on the rim.
+const UFO_ROWS = ['.DDD.', 'MMMMM']
+const UFO_COLORS: Record<string, number> = { D: 0xa8e0d0, M: 0x9098a8 }
+const UFO_LIGHTS = [0xff5ad0, 0x5affd0] // the two lights, blinking in turn
+const UFO_GLIDE = 0.6 // pixels per frame, coming in from the left
+const UFO_HOVER = 60 // frames over the grass, bobbing
+const UFO_BEAM = 24 // frames shining down
+const UFO_BEAM_COLOR = 0xb8ffb0
+const UFO_BEAM_ALPHA = 0.35
+const UFO_ZIP = 2 // pixels per frame, each axis, zipping off up and to the right
+
+/** Where the saucer hangs: right of the house, and over half way across. */
+const ufoX = (w: number) => Math.max(Math.round(w * 0.18) + 10, Math.round(w * 0.6))
+/** Frames the saucer takes to glide in to where it hangs. */
+const ufoGlide = (w: number) => Math.ceil((ufoX(w) + 4) / UFO_GLIDE)
+/** Frames it takes to zip off the right. */
+const ufoZip = (w: number) => Math.max(1, Math.ceil((w + 3 - ufoX(w)) / UFO_ZIP))
 
 const KINDS: Record<VisitorKind, Kind> = {
   // A few birds flap across a fair sky, one way or the other.
@@ -475,6 +588,202 @@ const KINDS: Record<VisitorKind, Kind> = {
     spin: 3,
     quarters: 1,
   }),
+
+  // A butterfly flutters by, bobbing as it goes.
+  butterfly: {
+    arrival: 'A butterfly flutters by.',
+    names: ['butterflies'],
+    layer: 'air',
+    length: w => Math.ceil((w + 16) / BUTTERFLY_SPEED),
+    draw({ w, groundY, sprite }, t, seed) {
+      const x = Math.round(across(w, t, BUTTERFLY_SPEED, heading(seed)))
+      // Between 3 and 8 pixels up: a slow bob, with a quicker, seeded wobble over it.
+      const up = Math.round(5.5 + Math.sin(t / 9) * 1.5 + Math.sin(t / 2.5 + hash(seed + 4) * Math.PI * 2))
+      const wings = Math.floor(t / 2) % 2 === 0 ? BUTTERFLY_OPEN : BUTTERFLY_CLOSED
+      sprite(wings, BUTTERFLY_COLORS, x - 1, groundY - up - 1)
+    },
+  },
+
+  // Someone walks the dog out past the house, and the two stop now and then to sniff.
+  'dog-walker': {
+    arrival: 'Someone is out walking the dog.',
+    names: ['dog', 'dogs', 'walker'],
+    layer: 'air',
+    length: w => Math.ceil((w + 8) / (WALK_SPEED * DOG_PACE)),
+    draw({ groundY, door, shade, dot, sprite, person }, t, seed) {
+      // Each visit's sniffs fall at their own point in the cycle.
+      const phase = Math.floor(hash(seed + 5) * DOG_SNIFF_EVERY)
+      const sniffing = (f: number) => (f + phase) % DOG_SNIFF_EVERY >= DOG_SNIFF_EVERY - DOG_SNIFF_FOR
+      let steps = 0 // frames spent walking so far
+      for (let f = 0; f < t; f++) if (!sniffing(f)) steps++
+      const isSniffing = sniffing(t)
+      const x = Math.round(door + steps * WALK_SPEED)
+      const dogX = x + DOG_LEAD
+      for (let lx = x + 2; lx < dogX; lx++) dot(lx, groundY - 2, shade(LEASH))
+      person(x, !isSniffing && Math.floor(steps / 2) % 2 === 1)
+      sprite(isSniffing ? DOG_SNIFF : DOG_TROT[Math.floor(steps / 2) % 2]!, DOG_COLORS, dogX, groundY - 2)
+    },
+  },
+
+  // A cyclist rolls past on a blue bike, facing whichever way they are going.
+  cyclist: {
+    arrival: 'Someone cycles past.',
+    names: ['cyclists', 'rider'],
+    layer: 'air',
+    length: w => Math.ceil((w + 8) / CYCLE_SPEED),
+    draw({ w, groundY, shade, dot, sprite }, t, seed) {
+      const dir = heading(seed)
+      const cx = Math.round(across(w, t, CYCLE_SPEED, dir))
+      const roll = BIKE_ROLL[Math.floor(t / 3) % 2]!
+      sprite(dir > 0 ? roll : roll.map(row => [...row].reverse().join('')), BIKE_COLORS, cx - 2, groundY - 3)
+      dot(cx, groundY - 4, shade(SKIN))
+      dot(cx, groundY - 3, shade(COAT))
+    },
+  },
+
+  // A hot-air balloon drifts over high up, bobbing gently as it goes.
+  balloon: {
+    arrival: 'A hot-air balloon drifts over.',
+    names: ['balloons', 'hot-air-balloon'],
+    layer: 'sky',
+    length: w => Math.ceil((w + 8) / BALLOON_SPEED),
+    draw({ w, groundY, sprite }, t, seed) {
+      const x = Math.round(across(w, t, BALLOON_SPEED, heading(seed)))
+      const top = Math.floor(groundY * (0.1 + hash(seed + 1) * 0.2))
+      sprite(BALLOON, BALLOON_COLORS, x - 2, top + Math.round(Math.sin(t / 25)))
+    },
+  },
+
+  // A satellite glides across the upper sky, steady and faint, not blinking like a plane.
+  satellite: {
+    arrival: 'A satellite glides over.',
+    names: ['satellites'],
+    layer: 'sky',
+    length: w => Math.ceil((w + 8) / SAT_SPEED),
+    draw({ w, groundY, dot }, t, seed) {
+      const x = Math.round(across(w, t, SAT_SPEED, heading(seed)))
+      const y0 = Math.floor(hash(seed + 1) * groundY * 0.4)
+      const slope = (hash(seed + 4) - 0.5) * 2 * SAT_SLOPE
+      dot(x, Math.round(y0 + t * SAT_SPEED * slope), SAT_COLOR, SAT_ALPHA)
+    },
+  },
+
+  // Northern lights ripple in curtains across the top of a clear night, fading in and out.
+  aurora: {
+    arrival: 'The northern lights are out.',
+    names: ['northern-lights', 'aurora-borealis', 'lights'],
+    layer: 'sky',
+    length: () => AURORA_FRAMES,
+    draw({ w, groundY, light, dot }, t, seed) {
+      const band = Math.floor(groundY * 0.35) // the top third of the sky
+      const phase = hash(seed + 6) * Math.PI * 2
+      const inOut = clamp01(Math.min(t, AURORA_FRAMES - t) / AURORA_FADE)
+      const overall = inOut * AURORA_ALPHA * (0.25 + 0.75 * (1 - light))
+      for (let x = 0; x < w; x++) {
+        const wave = Math.sin(x / 5 + t / 20) + 0.6 * Math.sin(x / 13 + t / 60 + phase)
+        const top = Math.round(((wave + 1.6) / 3.2) * band * 0.5)
+        const len = Math.min(band - top, Math.max(2, Math.round(band * (0.5 + 0.2 * Math.cos(x / 7 - t / 30 + phase)))))
+        for (let y = top; y < top + len; y++) {
+          const along = (y - top + 0.5) / len // 0 at the top of the streak, 1 at the bottom
+          dot(x, y, mix(AURORA_VIOLET, AURORA_GREEN, along), overall * clamp01(Math.min(along, 1 - along) * 4))
+        }
+      }
+    },
+  },
+
+  // A few bats zig-zag across the dusk, flapping as they go, up in the top half of the sky.
+  bats: {
+    arrival: 'The bats are out.',
+    names: ['bat'],
+    layer: 'air',
+    length: w => Math.ceil((w + 14) / BAT_SPEED),
+    draw({ w, groundY, sprite }, t, seed) {
+      const dir = heading(seed)
+      const lead = across(w, t, BAT_SPEED, dir)
+      const count = hash(seed + 3) < 0.5 ? 2 : 3
+      const y0 = 6 + Math.floor(groundY * 0.15 * hash(seed + 1))
+      for (let i = 0; i < count; i++) {
+        const k = seed + 10 + i * 4 // this bat's own seeded numbers
+        const bx = Math.round(lead - dir * i * 4)
+        const amp = 1.5 + hash(k + 1) * 1.5
+        const wobble = Math.sin(t / 2.5 + hash(k + 2) * Math.PI * 2)
+        const by = y0 + BAT_DY[i]! + Math.round(amp * Math.sin(t / 9 + hash(k) * Math.PI * 2) + wobble)
+        sprite(((t >> 1) + i) % 2 === 0 ? BAT_UP : BAT_DOWN, BAT_COLORS, bx - 1, by - 1)
+      }
+    },
+  },
+
+  // Fireflies blink low over the grass, each on its own beat, drifting slowly about.
+  fireflies: {
+    arrival: 'Fireflies are out over the grass.',
+    names: ['firefly'],
+    layer: 'air',
+    length: () => FIREFLY_FRAMES,
+    draw({ w, groundY, dot }, t, seed) {
+      const fade = clamp01(Math.min(t, FIREFLY_FRAMES - t) / FIREFLY_FADE)
+      const count = 6 + Math.floor(hash(seed + 7) * 3)
+      for (let i = 0; i < count; i++) {
+        const k = seed + 20 + i * 6 // this firefly's own seeded numbers
+        const x = Math.round(hash(k) * w + Math.sin(t / 31 + hash(k + 1) * Math.PI * 2) * 4)
+        const y = groundY - 2 - Math.floor(hash(k + 2) * 4) + Math.round(Math.sin(t / 17 + hash(k + 3) * Math.PI * 2))
+        const beat = ((t + hash(k + 4) * FIREFLY_CYCLE) % FIREFLY_CYCLE) / FIREFLY_CYCLE
+        const lit = beat < FIREFLY_ON ? clamp01(Math.min(beat, FIREFLY_ON - beat) / 0.06) : 0
+        dot(x, y, FIREFLY, lit * fade)
+      }
+    },
+  },
+
+  // A V of geese heads over high up, the lead first and the rest trailing back, flapping in turn.
+  geese: {
+    arrival: 'Geese are heading over.',
+    names: ['goose'],
+    layer: 'air',
+    length: w => Math.ceil((w + 14) / GOOSE_SPEED),
+    draw({ w, groundY, sprite }, t, seed) {
+      const dir = heading(seed)
+      const lead = across(w, t, GOOSE_SPEED, dir)
+      const y0 = 5 + Math.floor(groundY * (0.05 + hash(seed + 1) * 0.15)) + Math.round(Math.sin(t / 14))
+      for (let r = 0; r < 5; r++) {
+        // Ranks 1 and 2 trail either side of the lead, 3 and 4 behind them, and so on.
+        const pair = Math.ceil(r / 2)
+        const dy = r === 0 ? 0 : (r % 2 === 1 ? 1 : -1) * GOOSE_STEP * pair
+        const bx = Math.round(lead - dir * GOOSE_BACK * pair)
+        sprite(((t >> 2) + r) % 2 === 0 ? GOOSE_UP : GOOSE_LEVEL, GOOSE_COLORS, bx - 2, y0 + dy - 1)
+      }
+    },
+  },
+
+  // A saucer glides in and hangs over the grass, shines a beam down, then zips off up and to the right.
+  ufo: {
+    arrival: 'Was that…?',
+    names: ['saucer', 'ufos'],
+    layer: 'air',
+    length: w => ufoGlide(w) + UFO_HOVER + UFO_BEAM + ufoZip(w),
+    draw({ w, groundY, dot, sprite }, t) {
+      const glide = ufoGlide(w)
+      const beamAt = glide + UFO_HOVER
+      const zipAt = beamAt + UFO_BEAM
+      const hoverX = ufoX(w)
+      const hoverY = Math.floor((groundY * 3) / 8)
+      let [x, y] = [hoverX, hoverY]
+      if (t < glide) x = Math.round(-4 + t * UFO_GLIDE)
+      else if (t < beamAt) y += Math.round(Math.sin((t - glide) / 5))
+      else if (t >= zipAt) [x, y] = [hoverX + (t - zipAt) * UFO_ZIP, hoverY - (t - zipAt) * UFO_ZIP]
+      if (t >= beamAt && t < zipAt) {
+        // From under the rim down to the grass: one pixel wide at the top, three at the bottom.
+        const top = y + 2
+        const bottom = groundY - 1
+        for (let by = top; by <= bottom; by++) {
+          const spread = Math.round((by - top) / Math.max(1, bottom - top))
+          for (let dx = -spread; dx <= spread; dx++) dot(x + dx, by, UFO_BEAM_COLOR, UFO_BEAM_ALPHA)
+        }
+      }
+      sprite(UFO_ROWS, UFO_COLORS, x - 2, y - 1)
+      const blink = Math.floor(t / 3) % 2
+      dot(x - 1, y, UFO_LIGHTS[blink]!)
+      dot(x + 1, y, UFO_LIGHTS[1 - blink]!)
+    },
+  },
 }
 
 // Three anchor palettes; storminess 0..0.5 blends clear→overcast, 0.5..1 overcast→storm.
@@ -783,10 +1092,12 @@ let pinned: number | null = null // a time /weather at set, or null to follow th
 let isAutoOpened = false // opened unasked once this load, where it would be a sidebar
 let visitor: Visitor | null = null // whoever is passing through now
 let visitAt = 0 // the frame the next visit is due
+let lastKind: VisitorKind | null = null // who came last, not asked back at once
 
 /** Lets someone in now; they stay until out of sight, whatever the weather does meanwhile. */
 function visit(kind: VisitorKind) {
   visitor = { kind, start: frame, seed: Math.floor(Math.random() * 0x7fffffff) }
+  lastKind = kind
 }
 
 async function syncClock($: EngineInterface) {
@@ -839,7 +1150,7 @@ export const register: Register = on => {
       if (visitor && frame - visitor.start >= visitLength(visitor.kind, size?.columns ?? lastColumns)) visitor = null
       if (!visitor && frame >= visitAt) {
         const hasHouse = size ? size.columns >= 16 && groundLine(size.rows * 2) >= 8 : lastColumns >= 16
-        visit(visitorFor(shown, hour, Math.random(), hasHouse))
+        visit(visitorFor(shown, hour, Math.random(), hasHouse, lastKind))
         visitAt = frame + nextGap(Math.random())
       }
       if (!size) return
