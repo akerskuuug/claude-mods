@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { barFill, baseName, billingMode, CACHE_ICONS, cacheExplanation, cacheState, cacheTtlMs, cacheTtlOf, recacheCost, iconRgba, iconSvg, resolveBilling, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, locationLabel, parseGitStatus, parseWorktree, percentLeft } from './register'
+import { barFill, baseName, billingMode, CACHE_ICONS, cacheExplanation, cacheState, cacheTtlMs, cacheTtlOf, recacheCost, iconRgba, iconSvg, resolveBilling, contextLeft, dayKey, formatCost, sumDays, barCells, formatModel, formatResetIn, formatTokens, locationLabel, parseGitStatus, parseWorktree, percentLeft, pace, markTick } from './register'
 
 describe('usage-meter', () => {
   test('formats tokens like 10k/1M', async () => {
@@ -291,5 +291,45 @@ describe('prompt cache', () => {
     })
     expect(await ui.find({ type: 'Text', text: '3m' })).toBeDefined()
     await ui.unmount()
+  })
+})
+
+describe('pace', () => {
+  const now = Date.parse('2026-10-08T06:00:00Z')
+  const at = (hours: number) => new Date(now + hours * 3_600_000).toISOString()
+  const u = (percentUsed: number, resetsAt: string, kind = 'five_hour') => ({ context: { window: 1 }, rateLimits: [{ kind, percentUsed, resetsAt }] })
+
+  test('stays quiet early in the window', () => {
+    expect(pace('five_hour', u(30, at(4.8)), now)).toBe(null)
+  })
+
+  test('on pace: no projected limit hit', () => {
+    expect(pace('five_hour', u(40, at(3)), now)).toEqual({ expectedLeft: 60, hitInMs: null })
+  })
+
+  test('ahead of pace: projects when the window empties', () => {
+    // 2h in, 80% used: 40%/h, so 0.5h left.
+    expect(pace('five_hour', u(80, at(3)), now)).toEqual({ expectedLeft: 60, hitInMs: 1_800_000 })
+  })
+
+  test('already out, unknown kinds, missing data', () => {
+    expect(pace('five_hour', u(100, at(3)), now)?.hitInMs).toBe(0)
+    expect(pace('other', u(50, at(3), 'other'), now)).toBe(null)
+    expect(pace('five_hour', null, now)).toBe(null)
+    expect(pace('five_hour', u(50, at(3)), null)).toBe(null)
+  })
+})
+
+describe('pace tick', () => {
+  test('marks the even-spend cell, keeping the bar length', () => {
+    const bar = barCells(90, 10)
+    const marked = markTick(bar, 30, '90%')
+    expect(marked.filled.length + marked.empty.length).toBe(10)
+    expect((marked.filled + marked.empty)[2]).toBe('│')
+  })
+
+  test('leaves the bar alone when the tick would hit the label', () => {
+    const bar = barCells(50, 10)
+    expect(markTick(bar, 50, '50%')).toEqual(bar)
   })
 })

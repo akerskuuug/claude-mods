@@ -225,6 +225,40 @@ export function formatResetIn(resetsAt: string | undefined, nowMs: number | null
   return `${minutes}m`
 }
 
+export const WINDOW_MS: Record<string, number> = { five_hour: 5 * 60 * MINUTE, seven_day: 7 * 24 * 60 * MINUTE }
+const PACE_MIN_ELAPSED = 0.1
+
+export type Pace = { expectedLeft: number; hitInMs: number | null }
+
+// Where an even spend would stand now, and, if the current rate would empty the
+// window before it resets, how long that takes. Null while too little of the
+// window has passed to say anything.
+export function pace(kind: string, u: Usage | null, nowMs: number | null): Pace | null {
+  const length = WINDOW_MS[kind]
+  const window = u?.rateLimits.find(r => r.kind === kind)
+  if (!length || !window?.resetsAt || nowMs === null) return null
+  const resetsMs = Date.parse(window.resetsAt)
+  if (Number.isNaN(resetsMs)) return null
+  const elapsedMs = length - (resetsMs - nowMs)
+  const elapsed = elapsedMs / length
+  if (elapsed < PACE_MIN_ELAPSED || elapsed > 1) return null
+  const expectedLeft = Math.round(100 - elapsed * 100)
+  if (window.percentUsed >= 100) return { expectedLeft, hitInMs: 0 }
+  const hitInMs = ((100 - window.percentUsed) / window.percentUsed) * elapsedMs
+  return { expectedLeft, hitInMs: window.percentUsed > 0 && nowMs + hitInMs < resetsMs ? hitInMs : null }
+}
+
+// Puts a tick into a bar's cells at the even-spend mark, unless it would land on the label.
+export function markTick(bar: { filled: string; empty: string }, expectedLeft: number, label: string): { filled: string; empty: string } {
+  const cells = bar.filled.length + bar.empty.length
+  const at = Math.min(cells - 1, Math.max(0, Math.round((expectedLeft / 100) * cells) - 1))
+  const start = Math.max(0, Math.floor((cells - label.length) / 2))
+  if (at >= start && at < start + label.length) return bar
+  const text = bar.filled + bar.empty
+  const marked = text.slice(0, at) + '│' + text.slice(at + 1)
+  return { filled: marked.slice(0, bar.filled.length), empty: marked.slice(bar.filled.length) }
+}
+
 export function parseGitStatus(porcelainV2: string): Omit<GitState, 'worktree' | 'root'> | null {
   const lines = porcelainV2.split('\n').filter(line => line.length > 0)
   const head = lines.find(line => line.startsWith('# branch.head '))
@@ -481,8 +515,11 @@ export const register: Register = on => {
           </Box>
         )
       }
-      const { filled, empty } = barCells(left, BAR_CELLS)
+      const pacing = pace(kind, u, nowMs)
+      const plain = barCells(left, BAR_CELLS)
+      const { filled, empty } = pacing ? markTick(plain, pacing.expectedLeft, `${left}%`) : plain
       const resetIn = formatResetIn(u.rateLimits.find(r => r.kind === kind)?.resetsAt, nowMs)
+      const outIn = pacing?.hitInMs != null && nowMs !== null ? formatResetIn(new Date(nowMs + pacing.hitInMs).toISOString(), nowMs) : null
       return (
         <Box key={kind}>
           <Text dimColor>{label} </Text>
@@ -491,6 +528,7 @@ export const register: Register = on => {
           </Text>
           <Text backgroundColor={TRACK_COLOR}>{empty}</Text>
           {resetIn && <Text dimColor> · {resetIn}</Text>}
+          {outIn && <Text color="warning"> · out in {outIn}</Text>}
         </Box>
       )
     }
