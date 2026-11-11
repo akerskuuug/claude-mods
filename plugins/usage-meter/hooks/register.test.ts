@@ -151,7 +151,6 @@ describe('worktree toggle', () => {
     mock.store(on)
     on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
     on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [] } }) as never)
-    on('command.register', async () => ({ value: undefined }) as never)
     on('session.model', async () => ({ value: 'claude-opus-5-5' }) as never)
     on('session.cwd', async () => ({ value: '/wt/issue-538' }) as never)
     on('process.run', async (_$, e) =>
@@ -233,7 +232,6 @@ describe('prompt cache', () => {
     mock.store(on)
     on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
     on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 10 }] } }) as never)
-    on('command.register', async () => ({ value: undefined }) as never)
     on('session.model', async () => ({ value: 'claude-opus-5-5' }) as never)
     on('session.cwd', async () => ({ value: '/r' }) as never)
     on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
@@ -277,7 +275,6 @@ describe('prompt cache', () => {
     on('store.set', async () => ({ value: undefined }) as never)
     on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
     on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 10 }] } }) as never)
-    on('command.register', async () => ({ value: undefined }) as never)
     on('session.model', async () => ({ value: 'claude-opus-5-5' }) as never)
     on('session.cwd', async () => ({ value: '/r' }) as never)
     on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)

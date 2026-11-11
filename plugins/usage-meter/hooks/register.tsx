@@ -410,7 +410,6 @@ async function tick($: EngineInterface) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
-    await $.command.register({ name: 'usage-meter-debug', description: 'Show the raw usage figures Claude Code gives the usage-meter' })
     const { context, rateLimits, cost } = await $.session.usage()
     await update($, usage, () => ({ context, rateLimits }))
     await noteCost($, cost, { context, rateLimits })
@@ -419,11 +418,6 @@ export const register: Register = on => {
     await restoreCacheTtl($)
     $.clock.every(MINUTE, () => tick($))
     return result
-  })
-
-  on('command.run', { command: 'usage-meter-debug' }, async $ => {
-    const { rateLimits, cost } = await $.session.usage()
-    return { text: JSON.stringify({ billing: await currentBilling($), rateLimits, hasCost: cost !== undefined }, null, 2) }
   })
 
   on('session.measure', async ($, e, next) => {
