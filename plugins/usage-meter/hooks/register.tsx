@@ -510,6 +510,7 @@ export const register: Register = on => {
         <Text dimColor>Cost</Text>
         <Button
           key="cost-toggle"
+          hotkey="t"
           label={`${COST_VIEWS[index]!.label} ${isOpen ? '▴' : '▾'}`}
           onPress={() => update($, costOpen, v => !v)}
         />
@@ -517,7 +518,7 @@ export const register: Register = on => {
           {costs[index]}
           {estimated ? ' est.' : ''}
         </Text>
-        <Button key="cost-info" label={isInfo ? 'ⓘ Hide' : 'ⓘ'} onPress={() => update($, costInfo, v => !v)} />
+        <Button key="cost-info" hotkey="i" label={isInfo ? 'ⓘ Hide' : 'ⓘ'} onPress={() => update($, costInfo, v => !v)} />
       </Box>
     ) : (
       <Box key="limits" columnGap={3}>
@@ -537,6 +538,7 @@ export const register: Register = on => {
               {repo?.worktree && (
                 <Button
                   key="worktree-toggle"
+                  hotkey="w"
                   label={isWorktreeOpen ? '⎇ Hide' : '⎇'}
                   onPress={() => update($, worktreeOpen, v => !v)}
                 />
@@ -562,7 +564,7 @@ export const register: Register = on => {
               <Box key="cache" columnGap={1}>
                 {cacheIcon(cache.mode)}
                 {cache.mode === 'warm' && <Text dimColor>{`${cache.minutesLeft}m`}</Text>}
-                <Button key="cache-info" label={isCacheInfo ? 'ⓘ Hide' : 'ⓘ'} onPress={() => update($, cacheInfo, v => !v)} />
+                <Button key="cache-info" hotkey="c" label={isCacheInfo ? 'ⓘ Hide' : 'ⓘ'} onPress={() => update($, cacheInfo, v => !v)} />
               </Box>
             )}
             {limits}
@@ -613,6 +615,7 @@ export const register: Register = on => {
                 <Box width={labelWidth + 8}>
                   <Button
                     key={v.id}
+                    hotkey={String(i + 1)}
                     label={`${v.id === current ? '●' : '○'} ${v.label}`}
                     onPress={async () => {
                       await update($, costView, () => v.id)

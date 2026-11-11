@@ -26,6 +26,18 @@ The re-cache cost is the context size priced at the model's cache-write rate (2x
 - **Today / 7 days / 30 days** are estimates (marked `~` and `est.`). `hooks/scan.mjs` scans local logs in `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`) and the Cowork sessions folder (macOS and Windows), counts each message once and prices it at public API list prices per model (including fast mode, US-only inference, server-side compaction, Haiku 5.5's long-prompt rates and web searches). Discounts, other machines and logs older than 30 days are not reflected; unrecognised models are priced as Sonnet. Refreshed at most once a minute, and only for metered users.
 - Requires `node` on the PATH. Per-model prices are hardcoded in `hooks/rates.mjs` and need updating when pricing changes.
 
+## Keyboard
+
+If clicks don't reach Claude Code (some terminals, or the non-fullscreen layout), focus the band with `ctrl+x` then `Tab`, then press a key:
+
+| Key | Does |
+| --- | --- |
+| `t` | Open or close the cost period list |
+| `1`–`4` | Pick a period while the list is open |
+| `i` | Cost info |
+| `c` | Prompt-cache info |
+| `w` | Worktree details |
+
 ## Install
 
 ```
