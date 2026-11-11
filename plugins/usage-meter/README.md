@@ -39,6 +39,8 @@ If clicks don't reach Claude Code (some terminals, or the non-fullscreen layout)
 | `c` | Prompt-cache info |
 | `w` | Worktree details |
 
+`/usage-meter-debug` prints the rate-limit windows and billing mode the mod sees, for when a limit bar doesn't show up.
+
 ## Install
 
 ```
