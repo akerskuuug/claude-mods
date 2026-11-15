@@ -11,14 +11,34 @@ const SIMCTL = JSON.stringify({
 const ROOT = '/home/me/.claude/sim-board/claims'
 const NOW = 1_000_000_000
 
-type Hooks = { onLock?: () => void; mtime?: Map<string, number> }
-
-// A tiny claim store standing in for the disk, and simctl standing in for Xcode.
-// `dirs` maps a claim directory to its owner file (null: not written yet).
-function engine(on: any, dirs: Map<string, string | null>, ran: string[][], hooks: Hooks = {}) {
-  const locks = new Set<string>()
+// A tiny claim store standing in for the disk, simctl standing in for Xcode,
+// and claimctl.py's protocol answered from that store (claimctl_test.py tests
+// the script itself, locking included). `dirs` maps a claim directory to its
+// owner file (null: not written yet); `mtime` dates such a directory.
+function engine(on: any, dirs: Map<string, string | null>, ran: string[][], mtime = new Map<string, number>()) {
+  const done = (exitCode = 0, stdout = '') => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
   const name = (path: string) => path.slice(ROOT.length + 1).split('/')[0]!
-  const done = (exitCode = 0, stdout = '') => ({ value: { exitCode, stdout, stderr: exitCode ? 'exists' : '', isStdoutTruncated: false, isStderrTruncated: false } })
+  const entry = (udid: string) => {
+    const text = dirs.get(udid)
+    if (text) return { kind: 'claim', owner: JSON.parse(text) }
+    return dirs.has(udid) ? { kind: 'orphan', mtime: mtime.get(udid) ?? NOW } : { kind: 'none' }
+  }
+  const claimctl = (command: string, udid: string, a: any) => {
+    const e: any = entry(udid)
+    const takeable = a.force ? e.kind !== 'none' : e.kind === 'orphan' ? a.now - e.mtime >= a.orphanMs : e.kind === 'claim' && a.now - e.owner.heartbeatAt > a.staleMs
+    if (command === 'claim') {
+      const mine = e.kind === 'claim' && e.owner.sessionId === a.me
+      if (!mine && e.kind !== 'none' && !takeable) return { ok: false, holder: e.owner ?? null }
+      dirs.set(udid, JSON.stringify({ ...a.owner, sessionId: a.me, heartbeatAt: a.now, claimedAt: mine ? e.owner.claimedAt : a.now }))
+      return { ok: true }
+    }
+    if (command === 'release') {
+      if (e.kind === 'none') return { ok: true }
+      if ((e.kind === 'claim' && e.owner.sessionId === a.me) || a.force) return dirs.delete(udid), { ok: true }
+      return { ok: false, holder: e.owner ?? null }
+    }
+    return { ok: false }
+  }
   on('env.get', () => ({ value: '/home/me' }))
   on('session.id', () => ({ value: 'me' }))
   on('clock.now', () => ({ value: NOW }))
@@ -31,35 +51,22 @@ function engine(on: any, dirs: Map<string, string | null>, ran: string[][], hook
     const argv: string[] = e.argv
     ran.push(argv)
     if (argv[1] === 'simctl' && argv[2] === 'list') return done(0, SIMCTL)
-    if (argv[0] === 'mkdir' && argv[1] !== '-p') {
-      const n = name(argv[1]!)
-      if (n.startsWith('.lock-')) {
-        if (locks.has(n)) return done(1)
-        locks.add(n)
-        hooks.onLock?.()
-        return done()
-      }
-      if (dirs.has(n)) return done(1)
-      dirs.set(n, null)
+    if (argv[0] === 'python3' && argv[1]!.endsWith('/hooks/claimctl.py')) {
+      expect(argv[3]).toBe(ROOT)
+      return done(0, JSON.stringify(claimctl(argv[2]!, argv[4]!, JSON.parse(argv[5]!))))
     }
-    if (argv[0] === 'rmdir') locks.delete(name(argv[1]!))
-    if (argv[0] === 'rm') dirs.delete(name(argv[2]!))
     return done()
   })
-  on('fs.list', () => ({ value: [...dirs.keys(), ...locks].map(n => ({ name: n, kind: 'dir', size: 0 })) }))
+  on('fs.list', () => ({ value: [...dirs.keys()].map(n => ({ name: n, kind: 'dir', size: 0 })) }))
   on('fs.read', (_: unknown, e: any) => {
     const text = dirs.get(name(e.path))
     if (text == null) throw new Error('ENOENT')
     return { value: text }
   })
-  on('fs.write', (_: unknown, e: any) => {
-    dirs.set(name(e.path), e.text)
-    return { value: undefined }
-  })
   on('fs.stat', (_: unknown, e: any) => {
     const n = name(e.path)
-    if (!dirs.has(n) && !locks.has(n)) throw new Error('ENOENT')
-    return { value: { mtimeMs: hooks.mtime?.get(n) ?? NOW } }
+    if (!dirs.has(n)) throw new Error('ENOENT')
+    return { value: { mtimeMs: mtime.get(n) ?? NOW } }
   })
   on('tool.call', () => ({ result: { stdout: 'ran' } }))
 }
@@ -149,22 +156,9 @@ test('a stale claim is taken over', async ($, on) => {
   expect(JSON.parse(dirs.get('CCCC-26')!).sessionId).toBe('me')
 })
 
-test('a takeover leaves alone a claim made after it read the stale one', async ($, on) => {
-  const dirs = new Map<string, string | null>([['CCCC-26', stale]])
-  const third = JSON.stringify({ sessionId: 'third', label: 'web (main)', claimedAt: NOW, heartbeatAt: NOW })
-  // Another session finishes its own takeover just before this one gets the lock.
-  engine(on, dirs, [], { onLock: () => void dirs.set('CCCC-26', third) })
-  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
-
-  const claimed = await $.tool.call({ tool: 'mcp__sim-board__sims_claim', udid: 'CCCC-26', boot: false })
-  expect(String(claimed.result)).toContain('held by web (main)')
-  expect(dirs.get('CCCC-26')).toBe(third)
-})
-
 test('a claim directory left without an owner is reclaimed once it is old', async ($, on) => {
   const dirs = new Map<string, string | null>([['CCCC-26', null]])
-  const mtime = new Map([['CCCC-26', NOW - 5 * 60_000]])
-  engine(on, dirs, [], { mtime })
+  engine(on, dirs, [], new Map([['CCCC-26', NOW - 5 * 60_000]]))
   await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
 
   const claimed = await $.tool.call({ tool: 'mcp__sim-board__sims_claim', udid: 'CCCC-26', boot: false })
@@ -200,29 +194,4 @@ test('a line continuation before the destination is still guarded', async ($, on
 
   const ran = await $.tool.call({ tool: 'Bash', command: "xcodebuild test -scheme App \\\n  -destination 'platform=iOS Simulator,id=BBBB-26'" })
   expect(ran.deny).toContain('in use by shop (feat/cart)')
-})
-
-test('a takeover leaves alone a stale owner that renewed its heartbeat meanwhile', async ($, on) => {
-  const dirs = new Map<string, string | null>([['CCCC-26', stale]])
-  const renewed = JSON.stringify({ ...JSON.parse(stale), heartbeatAt: NOW })
-  // The old owner checks in just before this session gets the lock.
-  engine(on, dirs, [], { onLock: () => void dirs.set('CCCC-26', renewed) })
-  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
-
-  const claimed = await $.tool.call({ tool: 'mcp__sim-board__sims_claim', udid: 'CCCC-26', boot: false })
-  expect(String(claimed.result)).toContain('held by old (main)')
-  expect(dirs.get('CCCC-26')).toBe(renewed)
-})
-
-test('releasing leaves alone a claim another session took over meanwhile', async ($, on) => {
-  const mine = JSON.stringify({ sessionId: 'me', label: 'app', claimedAt: NOW - 3_600_000, heartbeatAt: NOW - 20 * 60_000 })
-  const theirs = JSON.stringify({ sessionId: 'third', label: 'web (main)', claimedAt: NOW, heartbeatAt: NOW })
-  const dirs = new Map<string, string | null>([['CCCC-26', mine]])
-  // Someone takes over our stale claim between our read and our lock.
-  engine(on, dirs, [], { onLock: () => void dirs.set('CCCC-26', theirs) })
-  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
-
-  const released = await $.tool.call({ tool: 'mcp__sim-board__sims_release' })
-  expect(String(released.result)).toBe('This session held no simulators.')
-  expect(dirs.get('CCCC-26')).toBe(theirs)
 })

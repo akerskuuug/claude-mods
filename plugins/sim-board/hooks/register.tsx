@@ -416,175 +416,54 @@ async function refresh($: EngineInterface): Promise<Board> {
   return b
 }
 
-async function writeOwner($: EngineInterface, udid: string, claimedAt: number, purpose?: string): Promise<void> {
-  const { root, label } = await context($)
-  const owner = {
-    sessionId: await $.session.id(),
-    label,
-    claimedAt,
-    heartbeatAt: await $.clock.now(),
-    ...(purpose ? { purpose } : {}),
-  }
-  await $.fs.write(`${root}/${udid}/owner.json`, JSON.stringify(owner))
-}
-
-async function removeClaim($: EngineInterface, udid: string): Promise<void> {
-  const { root } = await context($)
-  if (!/^[A-Fa-f0-9-]+$/.test(udid)) return
-  await $.process.run(['rm', '-rf', `${root}/${udid}`], { timeoutMs: 5_000 })
-}
-
 export type ClaimOutcome = { ok: true } | { ok: false; holder: Claim }
 
-// What a claim directory holds right now: nothing, an owner, or a directory whose
-// owner file is not written yet (someone mid-claim, or a session that died there).
-type Entry = { kind: 'none' } | { kind: 'claim'; claim: Claim } | { kind: 'orphan'; mtime: number }
+type CtlResult = { ok: boolean; holder?: unknown; error?: string }
 
-async function readEntry($: EngineInterface, udid: string): Promise<Entry> {
-  const { root } = await context($)
-  const dir = `${root}/${udid}`
+// Every change to a claim runs in hooks/claimctl.py under an flock the kernel
+// releases when that process exits: reading, deciding and writing can't
+// interleave with another session's, and no lock is ever left to break.
+async function claimctl($: EngineInterface, command: 'claim' | 'renew' | 'release', udid: string, args: Record<string, unknown>): Promise<CtlResult> {
+  const { root, staleMinutes } = await context($)
+  if (!/^[A-Fa-f0-9-]+$/.test(udid)) return { ok: false, error: 'bad udid' }
+  const full = { ...args, me: await $.session.id(), now: await $.clock.now(), staleMs: staleMinutes * MINUTE, orphanMs: ORPHAN_MS }
+  const run = await $.process.run(['python3', `${$.plugin.root}/hooks/claimctl.py`, command, root, udid, JSON.stringify(full)], {
+    timeoutMs: 15_000,
+  })
   try {
-    const claim = parseOwner(udid, String(await $.fs.read(`${dir}/owner.json`)))
-    if (claim) return { kind: 'claim', claim }
-  } catch {}
-  try {
-    const stat = await $.fs.stat(dir)
-    return { kind: 'orphan', mtime: stat.mtimeMs ?? (await $.clock.now()) }
+    return JSON.parse(run.stdout) as CtlResult
   } catch {
-    return { kind: 'none' }
+    return { ok: false, error: run.stderr.trim().split('\n').pop() || `claimctl exited ${run.exitCode}` }
   }
 }
 
-// Whether a claim may be taken from whoever made it: a stale owner, or an owner
-// file never written past ORPHAN_MS. `force` is a person freeing it by hand.
-export function isTakeable(entry: Entry, me: string, nowMs: number, staleMinutes: number, force: boolean): boolean {
-  if (entry.kind === 'none') return false
-  if (entry.kind === 'orphan') return force || nowMs - entry.mtime >= ORPHAN_MS
-  if (entry.claim.sessionId === me) return false
-  return force || isStale(entry.claim, nowMs, staleMinutes)
-}
-
-function sameEntry(a: Entry, b: Entry): boolean {
-  if (a.kind !== b.kind) return false
-  if (a.kind === 'claim' && b.kind === 'claim') return a.claim.sessionId === b.claim.sessionId && a.claim.claimedAt === b.claim.claimedAt
-  return true
-}
-
-const LOCK_STALE_MS = 30_000
-
-// Taking over a claim is serialized by a second directory, so two sessions that
-// both saw a claim go stale can't both delete it and each believe they won.
-async function withTakeoverLock<T>($: EngineInterface, udid: string, fn: () => Promise<T>): Promise<T | null> {
-  const { root } = await context($)
-  const lock = `${root}/.lock-${udid}`
-  let made = await $.process.run(['mkdir', lock], { timeoutMs: 5_000 })
-  if (made.exitCode !== 0) {
-    // A lock left by a session that died mid-takeover.
-    try {
-      const stat = await $.fs.stat(lock)
-      if ((await $.clock.now()) - (stat.mtimeMs ?? 0) < LOCK_STALE_MS) return null
-    } catch {}
-    await $.process.run(['rmdir', lock], { timeoutMs: 5_000 })
-    made = await $.process.run(['mkdir', lock], { timeoutMs: 5_000 })
-    if (made.exitCode !== 0) return null
-  }
-  try {
-    return await fn()
-  } finally {
-    await $.process.run(['rmdir', lock], { timeoutMs: 5_000 })
-  }
-}
-
-// Removes a claim directory only if, under the lock, it is still what the
-// caller saw and still takeable: a fresh claim made since, or an owner that
-// renewed its heartbeat meanwhile, is left alone.
-async function takeOver($: EngineInterface, udid: string, seen: Entry, force: boolean): Promise<boolean> {
-  const { staleMinutes } = await context($)
-  const me = await $.session.id()
-  const done = await withTakeoverLock($, udid, async () => {
-    const now = await readEntry($, udid)
-    if (now.kind === 'none') return true
-    if (!sameEntry(now, seen) || !isTakeable(now, me, await $.clock.now(), staleMinutes, force)) return false
-    await removeClaim($, udid)
-    return true
-  })
-  return done === true
-}
-
-// Renews or removes one of our own claims under the same lock as a takeover, so
-// neither lands on a claim another session has taken over meanwhile.
-async function whileMine($: EngineInterface, udid: string, fn: (claim: Claim) => Promise<void>): Promise<boolean> {
-  const me = await $.session.id()
-  const done = await withTakeoverLock($, udid, async () => {
-    const now = await readEntry($, udid)
-    if (now.kind !== 'claim' || now.claim.sessionId !== me) return false
-    await fn(now.claim)
-    return true
-  })
-  return done === true
-}
-
-function holderOfEntry(entry: Entry, udid: string): Claim {
-  if (entry.kind === 'claim') return entry.claim
-  const at = entry.kind === 'orphan' ? entry.mtime : 0
-  return { udid, sessionId: '?', label: 'another session (claiming…)', claimedAt: at, heartbeatAt: at }
+function holderFrom(result: CtlResult, udid: string): Claim {
+  const parsed = result.holder ? parseOwner(udid, JSON.stringify(result.holder)) : null
+  return parsed ?? { udid, sessionId: '?', label: result.error ? `unknown (${result.error})` : 'another session (claiming…)', claimedAt: 0, heartbeatAt: 0 }
 }
 
 async function claimSim($: EngineInterface, udid: string, purpose?: string, force = false): Promise<ClaimOutcome> {
-  const { root, staleMinutes } = await context($)
-  const me = await $.session.id()
-  await $.process.run(['mkdir', '-p', root], { timeoutMs: 5_000 })
-  let last: Entry = { kind: 'none' }
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const made = await $.process.run(['mkdir', `${root}/${udid}`], { timeoutMs: 5_000 })
-    if (made.exitCode === 0) {
-      await writeOwner($, udid, await $.clock.now(), purpose)
-      const written = await readEntry($, udid)
-      if (written.kind === 'claim' && written.claim.sessionId === me) return { ok: true }
-      last = written
-      continue
-    }
-    last = await readEntry($, udid)
-    if (last.kind === 'none') continue // released meanwhile: try again
-    if (last.kind === 'claim' && last.claim.sessionId === me) {
-      if (await whileMine($, udid, c => writeOwner($, udid, c.claimedAt, purpose ?? c.purpose))) return { ok: true }
-      last = await readEntry($, udid)
-      continue
-    }
-    if (!isTakeable(last, me, await $.clock.now(), staleMinutes, force)) break
-    if (!(await takeOver($, udid, last, force))) {
-      last = await readEntry($, udid)
-      if (last.kind !== 'none') break
-    }
-  }
-  // Success is only ever an owner file of ours on disk.
-  return { ok: false, holder: holderOfEntry(last.kind === 'none' ? { kind: 'orphan', mtime: 0 } : last, udid) }
+  const { label } = await context($)
+  const result = await claimctl($, 'claim', udid, { owner: { label, ...(purpose ? { purpose } : {}) }, force })
+  return result.ok ? { ok: true } : { ok: false, holder: holderFrom(result, udid) }
 }
 
 async function releaseSim($: EngineInterface, udid: string, force = false): Promise<boolean> {
-  const me = await $.session.id()
-  const current = await readEntry($, udid)
-  if (current.kind === 'none') return true
-  if (current.kind === 'claim' && current.claim.sessionId === me) {
-    await whileMine($, udid, () => removeClaim($, udid))
-    return true
-  }
-  return force ? takeOver($, udid, current, true) : false
+  return (await claimctl($, 'release', udid, { force })).ok
 }
 
 async function releaseMine($: EngineInterface): Promise<string[]> {
   const me = await $.session.id()
-  const mine = (await readClaims($)).filter(c => c.sessionId === me)
   const released: string[] = []
-  for (const c of mine) if (await whileMine($, c.udid, () => removeClaim($, c.udid))) released.push(c.udid)
+  for (const c of await readClaims($)) {
+    if (c.sessionId === me && (await claimctl($, 'release', c.udid, {})).ok) released.push(c.udid)
+  }
   return released
 }
 
 async function heartbeat($: EngineInterface): Promise<void> {
   const me = await $.session.id()
-  for (const c of await readClaims($)) {
-    if (c.sessionId === me) await whileMine($, c.udid, mine => writeOwner($, c.udid, mine.claimedAt, mine.purpose))
-  }
+  for (const c of await readClaims($)) if (c.sessionId === me) await claimctl($, 'renew', c.udid, {})
 }
 
 // ---------------------------------------------------------------------------

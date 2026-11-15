@@ -14,7 +14,9 @@ Releasing leaves the simulator booted so the next test run starts warm. A sessio
 
 ## How claims are shared
 
-Each claim is a directory, `~/.claude/sim-board/claims/<udid>/`, holding `owner.json` (session id, label, when claimed, last check-in). `mkdir` is atomic, so two sessions can't claim the same simulator at once; taking over a stale claim goes through a second lock directory (`.lock-<udid>`) and re-checks the claim under it, so two sessions can't both take the same stale one. A claim directory left without an owner file (a session that died mid-claim) is reclaimable after a minute. Each session renews its claims every minute and re-reads simulators and claims every 15 seconds. You can inspect or clear claims by hand in that folder.
+Each claim is a directory, `~/.claude/sim-board/claims/<udid>/`, holding `owner.json` (session id, label, when claimed, last check-in). Every change to a claim (claiming, taking over a stale one, the check-in, releasing) runs in `hooks/claimctl.py` under an exclusive `flock` on `~/.claude/sim-board/claims/.lock-<udid>`. The kernel releases that lock when the process exits, however it exits, so two sessions can never both win the same simulator and no lock is ever left behind. A claim directory without an owner file (a session that died mid-claim) can be reclaimed after a minute.
+
+Each session renews its claims every minute and re-reads simulators and claims every 15 seconds. You can inspect or clear claims by hand in that folder.
 
 ## Settings
 
@@ -25,7 +27,7 @@ In `/config` (or `pluginConfigs` in settings):
 | `filter` | empty | Only list and pick simulators whose name or runtime matches this regular expression (case-insensitive), e.g. `iPhone.*\|iOS 26`. The guard still checks every simulator. |
 | `staleMinutes` | `15` | How long a claim survives without its session checking in |
 
-Needs Xcode's command line tools (`xcrun simctl`). On a machine without them the mod shows the error in the pane and adds no tools or guard.
+Needs Xcode's command line tools (`xcrun simctl`, and the `python3` they ship). On a machine without them the mod shows the error in the pane and adds no tools or guard.
 
 ## Install
 
@@ -47,3 +49,10 @@ The mod runs as function hooks, which Claude Code only loads when they are switc
 ```
 
 Without it the mod installs but shows nothing.
+
+## Development
+
+```sh
+claude plugin test plugins/sim-board                                          # hooks
+python3 -m unittest discover -s plugins/sim-board/hooks -p 'claimctl_test.py'  # claim locking, with real processes
+```
