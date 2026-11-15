@@ -16,6 +16,11 @@
       "name": "context-weather",
       "source": "./plugins/context-weather",
       "description": "A lo-fi pixel weather window whose sky follows the context: clear when it is empty, a thunderstorm when it is full, and day or night by your clock"
+    },
+    {
+      "name": "sim-board",
+      "source": "./plugins/sim-board",
+      "description": "A shared board of iOS Simulators for UI tests: booted, free, or claimed by which Claude Code session, with claim/release tools and a guard against testing on another session's simulator"
     }
   ]
 }
