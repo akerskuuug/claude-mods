@@ -14,7 +14,7 @@ Releasing leaves the simulator booted so the next test run starts warm. A sessio
 
 ## How claims are shared
 
-Each claim is a directory, `~/.claude/sim-board/claims/<udid>/`, holding `owner.json` (session id, label, when claimed, last check-in). `mkdir` is atomic, so two sessions can't claim the same simulator at once. Each session renews its claims every minute and re-reads simulators and claims every 15 seconds. You can inspect or clear claims by hand in that folder.
+Each claim is a directory, `~/.claude/sim-board/claims/<udid>/`, holding `owner.json` (session id, label, when claimed, last check-in). `mkdir` is atomic, so two sessions can't claim the same simulator at once; taking over a stale claim goes through a second lock directory (`.lock-<udid>`) and re-checks the claim under it, so two sessions can't both take the same stale one. A claim directory left without an owner file (a session that died mid-claim) is reclaimable after a minute. Each session renews its claims every minute and re-reads simulators and claims every 15 seconds. You can inspect or clear claims by hand in that folder.
 
 ## Settings
 
@@ -22,7 +22,7 @@ In `/config` (or `pluginConfigs` in settings):
 
 | Field | Default | Does |
 | --- | --- | --- |
-| `filter` | empty | Only list simulators whose name or runtime matches this regular expression (case-insensitive), e.g. `iPhone.*\|iOS 26` |
+| `filter` | empty | Only list and pick simulators whose name or runtime matches this regular expression (case-insensitive), e.g. `iPhone.*\|iOS 26`. The guard still checks every simulator. |
 | `staleMinutes` | `15` | How long a claim survives without its session checking in |
 
 Needs Xcode's command line tools (`xcrun simctl`). On a machine without them the mod shows the error in the pane and adds no tools or guard.

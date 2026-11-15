@@ -132,14 +132,25 @@ export function shellWords(command: string): string[][] {
     } else if (c === '"') {
       i++
       while (i < command.length && command[i] !== '"') {
-        if (command[i] === '\\' && i + 1 < command.length) i++
+        if (command[i] === '\\' && i + 1 < command.length) {
+          i++
+          // Inside double quotes a backslash escapes only these; elsewhere it stays.
+          if (command[i] === '\n') {
+            i++
+            continue
+          }
+          if (!'"\\$`'.includes(command[i]!)) word += '\\'
+        }
         word += command[i]
         i++
       }
       hasWord = true
     } else if (c === '\\' && i + 1 < command.length) {
-      word += command[++i]
-      hasWord = true
+      // A backslash-newline is removed from the input, joining the lines.
+      if (command[++i] !== '\n') {
+        word += command[i]
+        hasWord = true
+      }
     } else if (c === ';' || c === '|' || c === '&' || c === '\n') {
       endCommand()
     } else if (c === ' ' || c === '\t') {
@@ -362,7 +373,7 @@ async function readClaims($: EngineInterface): Promise<Claim[]> {
   const now = await $.clock.now()
   const claims: Claim[] = []
   for (const entry of entries) {
-    if (entry.kind !== 'dir') continue
+    if (entry.kind !== 'dir' || entry.name.startsWith('.')) continue
     let claim: Claim | null = null
     try {
       claim = parseOwner(entry.name, String(await $.fs.read(`${root}/${entry.name}/owner.json`)))
@@ -388,8 +399,8 @@ async function listSims($: EngineInterface): Promise<{ sims: Sim[]; error: strin
   try {
     const run = await $.process.run(['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], { timeoutMs: 20_000 })
     if (run.exitCode !== 0) return { sims: [], error: `simctl failed: ${run.stderr.trim().split('\n')[0] ?? run.exitCode}` }
-    const { filter } = await context($)
-    return { sims: filterSims(parseDevices(run.stdout), filter), error: null }
+    // The full inventory: the guard must see a held simulator the filter hides.
+    return { sims: parseDevices(run.stdout), error: null }
   } catch {
     return { sims: [], error: 'simctl not available (Xcode command line tools are needed)' }
   }
@@ -425,36 +436,123 @@ async function removeClaim($: EngineInterface, udid: string): Promise<void> {
 
 export type ClaimOutcome = { ok: true } | { ok: false; holder: Claim }
 
+// What a claim directory holds right now: nothing, an owner, or a directory whose
+// owner file is not written yet (someone mid-claim, or a session that died there).
+type Entry = { kind: 'none' } | { kind: 'claim'; claim: Claim } | { kind: 'orphan'; mtime: number }
+
+async function readEntry($: EngineInterface, udid: string): Promise<Entry> {
+  const { root } = await context($)
+  const dir = `${root}/${udid}`
+  try {
+    const claim = parseOwner(udid, String(await $.fs.read(`${dir}/owner.json`)))
+    if (claim) return { kind: 'claim', claim }
+  } catch {}
+  try {
+    const stat = await $.fs.stat(dir)
+    return { kind: 'orphan', mtime: stat.mtimeMs ?? (await $.clock.now()) }
+  } catch {
+    return { kind: 'none' }
+  }
+}
+
+// Whether a claim may be taken from whoever made it: a stale owner, or an owner
+// file never written past ORPHAN_MS. `force` is a person freeing it by hand.
+export function isTakeable(entry: Entry, me: string, nowMs: number, staleMinutes: number, force: boolean): boolean {
+  if (entry.kind === 'none') return false
+  if (entry.kind === 'orphan') return force || nowMs - entry.mtime >= ORPHAN_MS
+  if (entry.claim.sessionId === me) return false
+  return force || isStale(entry.claim, nowMs, staleMinutes)
+}
+
+function sameEntry(a: Entry, b: Entry): boolean {
+  if (a.kind !== b.kind) return false
+  if (a.kind === 'claim' && b.kind === 'claim') return a.claim.sessionId === b.claim.sessionId && a.claim.claimedAt === b.claim.claimedAt
+  return true
+}
+
+const LOCK_STALE_MS = 30_000
+
+// Taking over a claim is serialized by a second directory, so two sessions that
+// both saw a claim go stale can't both delete it and each believe they won.
+async function withTakeoverLock<T>($: EngineInterface, udid: string, fn: () => Promise<T>): Promise<T | null> {
+  const { root } = await context($)
+  const lock = `${root}/.lock-${udid}`
+  let made = await $.process.run(['mkdir', lock], { timeoutMs: 5_000 })
+  if (made.exitCode !== 0) {
+    // A lock left by a session that died mid-takeover.
+    try {
+      const stat = await $.fs.stat(lock)
+      if ((await $.clock.now()) - (stat.mtimeMs ?? 0) < LOCK_STALE_MS) return null
+    } catch {}
+    await $.process.run(['rmdir', lock], { timeoutMs: 5_000 })
+    made = await $.process.run(['mkdir', lock], { timeoutMs: 5_000 })
+    if (made.exitCode !== 0) return null
+  }
+  try {
+    return await fn()
+  } finally {
+    await $.process.run(['rmdir', lock], { timeoutMs: 5_000 })
+  }
+}
+
+// Removes a claim directory only if, under the lock, it still holds what the
+// caller saw: a fresh claim made since is left alone.
+async function takeOver($: EngineInterface, udid: string, seen: Entry): Promise<boolean> {
+  const done = await withTakeoverLock($, udid, async () => {
+    const now = await readEntry($, udid)
+    if (now.kind === 'none') return true
+    if (!sameEntry(now, seen)) return false
+    await removeClaim($, udid)
+    return true
+  })
+  return done === true
+}
+
+function holderOfEntry(entry: Entry, udid: string): Claim {
+  if (entry.kind === 'claim') return entry.claim
+  const at = entry.kind === 'orphan' ? entry.mtime : 0
+  return { udid, sessionId: '?', label: 'another session (claiming…)', claimedAt: at, heartbeatAt: at }
+}
+
 async function claimSim($: EngineInterface, udid: string, purpose?: string, force = false): Promise<ClaimOutcome> {
   const { root, staleMinutes } = await context($)
   const me = await $.session.id()
   await $.process.run(['mkdir', '-p', root], { timeoutMs: 5_000 })
-  for (let attempt = 0; attempt < 2; attempt++) {
+  let last: Entry = { kind: 'none' }
+  for (let attempt = 0; attempt < 3; attempt++) {
     const made = await $.process.run(['mkdir', `${root}/${udid}`], { timeoutMs: 5_000 })
     if (made.exitCode === 0) {
       await writeOwner($, udid, await $.clock.now(), purpose)
+      const written = await readEntry($, udid)
+      if (written.kind === 'claim' && written.claim.sessionId === me) return { ok: true }
+      last = written
+      continue
+    }
+    last = await readEntry($, udid)
+    if (last.kind === 'none') continue // released meanwhile: try again
+    if (last.kind === 'claim' && last.claim.sessionId === me) {
+      await writeOwner($, udid, last.claim.claimedAt, purpose ?? last.claim.purpose)
       return { ok: true }
     }
-    const current = (await readClaims($)).find(c => c.udid === udid)
-    if (!current) continue // released meanwhile, or orphaned: try again
-    if (current.sessionId === me) {
-      await writeOwner($, udid, current.claimedAt, purpose ?? current.purpose)
-      return { ok: true }
+    if (!isTakeable(last, me, await $.clock.now(), staleMinutes, force)) break
+    if (!(await takeOver($, udid, last))) {
+      last = await readEntry($, udid)
+      if (last.kind !== 'none') break
     }
-    if (!force && !isStale(current, await $.clock.now(), staleMinutes)) return { ok: false, holder: current }
-    await removeClaim($, udid)
   }
-  const holder = (await readClaims($)).find(c => c.udid === udid)
-  return holder ? { ok: false, holder } : { ok: true }
+  // Success is only ever an owner file of ours on disk.
+  return { ok: false, holder: holderOfEntry(last.kind === 'none' ? { kind: 'orphan', mtime: 0 } : last, udid) }
 }
 
 async function releaseSim($: EngineInterface, udid: string, force = false): Promise<boolean> {
   const me = await $.session.id()
-  const current = (await readClaims($)).find(c => c.udid === udid)
-  if (!current) return true
-  if (current.sessionId !== me && !force) return false
-  await removeClaim($, udid)
-  return true
+  const current = await readEntry($, udid)
+  if (current.kind === 'none') return true
+  if (current.kind === 'claim' && current.claim.sessionId === me) {
+    await removeClaim($, udid)
+    return true
+  }
+  return force ? takeOver($, udid, current) : false
 }
 
 async function releaseMine($: EngineInterface): Promise<string[]> {
@@ -480,6 +578,8 @@ const toolRe = (name: string) => new RegExp(`^mcp__${PLUGIN}__${name}$`)
 export const register: Register = (on, options) => {
   const filter = typeof options.filter === 'string' ? options.filter : ''
   const staleMinutes = typeof options.staleMinutes === 'number' && options.staleMinutes > 0 ? options.staleMinutes : 15
+  // The filter narrows what is listed and picked, never what the guard checks.
+  const view = (b: Board): Board => ({ ...b, sims: filterSims(b.sims, filter) })
 
   on('session.start', async ($, e, next) => {
     ctx = null
@@ -548,12 +648,12 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'sims' }, async $ => {
     const b = await refresh($)
     void $.ui.open({ id: PANE, title: 'Simulators' })
-    return { text: summarize(b, await $.session.id(), b.at, staleMinutes) }
+    return { text: summarize(view(b), await $.session.id(), b.at, staleMinutes) }
   })
 
   on('tool.call', { tool: toolRe('sims_list') }, async $ => {
     const b = await refresh($)
-    return { result: listText(b, await $.session.id(), b.at, staleMinutes) }
+    return { result: listText(view(b), await $.session.id(), b.at, staleMinutes) }
   })
 
   on('tool.call', { tool: toolRe('sims_claim') }, async ($, e) => {
@@ -565,11 +665,11 @@ export const register: Register = (on, options) => {
     const udid = str('udid')
     const sim = udid
       ? b.sims.find(s => s.udid === udid)
-      : pickFree(b.sims, b.claims, me, b.at, staleMinutes, { name: str('name'), runtime: str('runtime') })
-    if (!sim) return { result: udid ? `No available simulator has udid ${udid}.` : `No free simulator matches.\n\n${listText(b, me, b.at, staleMinutes)}` }
+      : pickFree(view(b).sims, b.claims, me, b.at, staleMinutes, { name: str('name'), runtime: str('runtime') })
+    if (!sim) return { result: udid ? `No available simulator has udid ${udid}.` : `No free simulator matches.\n\n${listText(view(b), me, b.at, staleMinutes)}` }
     const outcome = await claimSim($, sim.udid, str('purpose'))
     if (!outcome.ok) {
-      const alt = pickFree(b.sims, b.claims, me, b.at, staleMinutes)
+      const alt = pickFree(view(b).sims, b.claims, me, b.at, staleMinutes)
       return {
         result: `${sim.name} is held by ${outcome.holder.label}.${alt ? ` ${alt.name} [${alt.udid}] is free.` : ' No other simulator is free.'}`,
       }
@@ -608,7 +708,7 @@ export const register: Register = (on, options) => {
         const holder = holderOf(udid, b.claims, me, b.at, staleMinutes)
         if (!isTaken(holder) || holder.kind !== 'held') continue
         const sim = b.sims.find(s => s.udid === udid)!
-        const alt = pickFree(b.sims, b.claims, me, b.at, staleMinutes)
+        const alt = pickFree(view(b).sims, b.claims, me, b.at, staleMinutes)
         return {
           deny:
             `sim-board: ${sim.name} [${udid}] is in use by ${holder.claim.label} (claimed ${formatAge(b.at - holder.claim.claimedAt)} ago${holder.claim.purpose ? `, ${holder.claim.purpose}` : ''}); ${t.what} on it is refused. ` +
@@ -637,9 +737,10 @@ export const register: Register = (on, options) => {
     if (b.error) return <Text color="warning">{b.error}</Text>
     const me = await $.session.id()
     const now = b.at
+    const shown = view(b)
     const rows: RenderChildren[] = []
     let runtime = ''
-    for (const s of b.sims) {
+    for (const s of shown.sims) {
       if (s.runtime !== runtime) {
         runtime = s.runtime
         rows.push(
@@ -669,10 +770,10 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" gap={1}>
-          <Text dimColor>{summarize(b, me, now, staleMinutes)}</Text>
+          <Text dimColor>{summarize(shown, me, now, staleMinutes)}</Text>
           <Button key="refresh" hotkey="r" label="Refresh" dimColor onPress={() => void refresh($)} />
         </Box>
-        {b.sims.length ? rows : <Text dimColor>No available simulators.</Text>}
+        {shown.sims.length ? rows : <Text dimColor>No available simulators.</Text>}
       </Box>
     )
   })

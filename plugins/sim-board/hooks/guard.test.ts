@@ -11,8 +11,14 @@ const SIMCTL = JSON.stringify({
 const ROOT = '/home/me/.claude/sim-board/claims'
 const NOW = 1_000_000_000
 
+type Hooks = { onLock?: () => void; mtime?: Map<string, number> }
+
 // A tiny claim store standing in for the disk, and simctl standing in for Xcode.
-function engine(on: any, dirs: Map<string, string | null>, ran: string[][]) {
+// `dirs` maps a claim directory to its owner file (null: not written yet).
+function engine(on: any, dirs: Map<string, string | null>, ran: string[][], hooks: Hooks = {}) {
+  const locks = new Set<string>()
+  const name = (path: string) => path.slice(ROOT.length + 1).split('/')[0]!
+  const done = (exitCode = 0, stdout = '') => ({ value: { exitCode, stdout, stderr: exitCode ? 'exists' : '', isStdoutTruncated: false, isStderrTruncated: false } })
   on('env.get', () => ({ value: '/home/me' }))
   on('session.id', () => ({ value: 'me' }))
   on('clock.now', () => ({ value: NOW }))
@@ -24,28 +30,37 @@ function engine(on: any, dirs: Map<string, string | null>, ran: string[][]) {
   on('process.run', (_: unknown, e: any) => {
     const argv: string[] = e.argv
     ran.push(argv)
-    const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
-    if (argv[1] === 'simctl' && argv[2] === 'list') return ok(SIMCTL)
+    if (argv[1] === 'simctl' && argv[2] === 'list') return done(0, SIMCTL)
     if (argv[0] === 'mkdir' && argv[1] !== '-p') {
-      const udid = argv[1]!.split('/').pop()!
-      if (dirs.has(udid)) return { value: { exitCode: 1, stdout: '', stderr: 'exists', isStdoutTruncated: false, isStderrTruncated: false } }
-      dirs.set(udid, null)
+      const n = name(argv[1]!)
+      if (n.startsWith('.lock-')) {
+        if (locks.has(n)) return done(1)
+        locks.add(n)
+        hooks.onLock?.()
+        return done()
+      }
+      if (dirs.has(n)) return done(1)
+      dirs.set(n, null)
     }
-    if (argv[0] === 'rm') dirs.delete(argv[2]!.split('/').pop()!)
-    return ok()
+    if (argv[0] === 'rmdir') locks.delete(name(argv[1]!))
+    if (argv[0] === 'rm') dirs.delete(name(argv[2]!))
+    return done()
   })
-  on('fs.list', () => ({ value: [...dirs.keys()].map(name => ({ name, kind: 'dir', size: 0 })) }))
+  on('fs.list', () => ({ value: [...dirs.keys(), ...locks].map(n => ({ name: n, kind: 'dir', size: 0 })) }))
   on('fs.read', (_: unknown, e: any) => {
-    const udid = e.path.slice(ROOT.length + 1).split('/')[0]
-    const text = dirs.get(udid)
+    const text = dirs.get(name(e.path))
     if (text == null) throw new Error('ENOENT')
     return { value: text }
   })
   on('fs.write', (_: unknown, e: any) => {
-    dirs.set(e.path.slice(ROOT.length + 1).split('/')[0], e.text)
+    dirs.set(name(e.path), e.text)
     return { value: undefined }
   })
-  on('fs.stat', () => ({ value: { mtimeMs: NOW } }))
+  on('fs.stat', (_: unknown, e: any) => {
+    const n = name(e.path)
+    if (!dirs.has(n) && !locks.has(n)) throw new Error('ENOENT')
+    return { value: { mtimeMs: hooks.mtime?.get(n) ?? NOW } }
+  })
   on('tool.call', () => ({ result: { stdout: 'ran' } }))
 }
 
@@ -120,4 +135,69 @@ test('the pane shows who holds what, on every surface', async ($, on) => {
     await ui.unmount()
     dirs.delete('CCCC-26')
   }
+})
+
+const stale = JSON.stringify({ sessionId: 'gone', label: 'old (main)', claimedAt: NOW - 3_600_000, heartbeatAt: NOW - 20 * 60_000 })
+
+test('a stale claim is taken over', async ($, on) => {
+  const dirs = new Map<string, string | null>([['CCCC-26', stale]])
+  engine(on, dirs, [])
+  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
+
+  const claimed = await $.tool.call({ tool: 'mcp__sim-board__sims_claim', udid: 'CCCC-26', boot: false })
+  expect(String(claimed.result)).toContain('Claimed iPhone 17 Pro')
+  expect(JSON.parse(dirs.get('CCCC-26')!).sessionId).toBe('me')
+})
+
+test('a takeover leaves alone a claim made after it read the stale one', async ($, on) => {
+  const dirs = new Map<string, string | null>([['CCCC-26', stale]])
+  const third = JSON.stringify({ sessionId: 'third', label: 'web (main)', claimedAt: NOW, heartbeatAt: NOW })
+  // Another session finishes its own takeover just before this one gets the lock.
+  engine(on, dirs, [], { onLock: () => void dirs.set('CCCC-26', third) })
+  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
+
+  const claimed = await $.tool.call({ tool: 'mcp__sim-board__sims_claim', udid: 'CCCC-26', boot: false })
+  expect(String(claimed.result)).toContain('held by web (main)')
+  expect(dirs.get('CCCC-26')).toBe(third)
+})
+
+test('a claim directory left without an owner is reclaimed once it is old', async ($, on) => {
+  const dirs = new Map<string, string | null>([['CCCC-26', null]])
+  const mtime = new Map([['CCCC-26', NOW - 5 * 60_000]])
+  engine(on, dirs, [], { mtime })
+  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
+
+  const claimed = await $.tool.call({ tool: 'mcp__sim-board__sims_claim', udid: 'CCCC-26', boot: false })
+  expect(String(claimed.result)).toContain('Claimed iPhone 17 Pro')
+  expect(JSON.parse(dirs.get('CCCC-26')!).sessionId).toBe('me')
+})
+
+test('a fresh claim directory without an owner yet is not reported as ours', async ($, on) => {
+  const dirs = new Map<string, string | null>([['CCCC-26', null]])
+  engine(on, dirs, [])
+  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
+
+  const claimed = await $.tool.call({ tool: 'mcp__sim-board__sims_claim', udid: 'CCCC-26', boot: false })
+  expect(String(claimed.result)).toContain('held by another session')
+  expect(dirs.get('CCCC-26')).toBe(null)
+})
+
+test('the display filter does not hide a held simulator from the guard', { options: { filter: 'Pro' } }, async ($, on) => {
+  const dirs = new Map<string, string | null>([['BBBB-26', other]])
+  engine(on, dirs, [])
+  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
+
+  const ran = await $.tool.call({ tool: 'Bash', command: "xcodebuild test -destination 'platform=iOS Simulator,id=BBBB-26'" })
+  expect(ran.deny).toContain('in use by shop (feat/cart)')
+  const listed = await $.tool.call({ tool: 'mcp__sim-board__sims_list' })
+  expect(String(listed.result)).not.toContain('BBBB-26')
+})
+
+test('a line continuation before the destination is still guarded', async ($, on) => {
+  const dirs = new Map<string, string | null>([['BBBB-26', other]])
+  engine(on, dirs, [])
+  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
+
+  const ran = await $.tool.call({ tool: 'Bash', command: "xcodebuild test -scheme App \\\n  -destination 'platform=iOS Simulator,id=BBBB-26'" })
+  expect(ran.deny).toContain('in use by shop (feat/cart)')
 })

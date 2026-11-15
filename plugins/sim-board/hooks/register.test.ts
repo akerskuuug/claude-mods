@@ -54,6 +54,8 @@ describe('commands', () => {
       ['cd', 'app'],
       ['xcodebuild', 'test', '-destination', 'platform=iOS Simulator,name=iPhone 17'],
     ])
+    expect(shellWords("xcodebuild test \\\n  -destination 'id=X'")).toEqual([['xcodebuild', 'test', '-destination', 'id=X']])
+    expect(shellWords('echo "a\\\nb" "c\\d"')).toEqual([['echo', 'ab', 'c\\d']])
     expect(shellWords('xcrun simctl boot "iPhone 17 Pro"; echo ok')).toEqual([
       ['xcrun', 'simctl', 'boot', 'iPhone 17 Pro'],
       ['echo', 'ok'],
