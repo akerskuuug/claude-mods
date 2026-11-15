@@ -83,6 +83,22 @@ describe('commands', () => {
       { udids: ['BBBB-26', 'CCCC-26', 'AAAA-18'], isClaiming: false, what: 'simctl shutdown' },
     ])
     expect(targetsOf('xcrun simctl list devices', sims)).toEqual([])
+    expect(targetsOf("env CI=1 xcrun --sdk iphonesimulator simctl boot CCCC-26", sims)).toEqual([
+      { udids: ['CCCC-26'], isClaiming: true, what: 'simctl boot' },
+    ])
+    expect(targetsOf("(cd app && /usr/bin/xcodebuild test -destination 'id=CCCC-26')", sims).map(t => t.udids)).toEqual([['CCCC-26']])
+    expect(targetsOf(`bash -c "xcodebuild test -destination 'id=CCCC-26'"`, sims).map(t => t.udids)).toEqual([['CCCC-26']])
+  })
+
+  test('ignores simulator commands that are only data', async () => {
+    expect(targetsOf("echo xcodebuild test -destination 'id=CCCC-26'", sims)).toEqual([])
+    expect(targetsOf("git commit -m 'xcrun simctl boot CCCC-26'", sims)).toEqual([])
+    expect(targetsOf("ls # xcodebuild test -destination 'id=CCCC-26'", sims)).toEqual([])
+    const heredoc = "cat > run.sh <<'EOF'\nxcodebuild test -destination 'id=CCCC-26'\nEOF\nchmod +x run.sh"
+    expect(targetsOf(heredoc, sims)).toEqual([])
+    expect(shellWords(heredoc)).toEqual([['cat', '>', 'run.sh'], ['chmod', '+x', 'run.sh']])
+    const dashed = "cat <<-END > x\n\txcrun simctl boot CCCC-26\n\tEND\nxcrun simctl boot BBBB-26"
+    expect(targetsOf(dashed, sims).map(t => t.udids)).toEqual([['BBBB-26']])
     expect(targetsOf('git status', sims)).toEqual([])
   })
 })

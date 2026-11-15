@@ -106,7 +106,8 @@ export function formatAge(ms: number): string {
 }
 
 // Splits a shell command into words per simple command, honouring quotes and
-// backslashes; `&&`, `||`, `;`, `|` and newlines end a command.
+// backslashes; `&&`, `||`, `;`, `|`, `(`, `)` and newlines end a command.
+// Comments and heredoc bodies are data, not commands, and are dropped.
 export function shellWords(command: string): string[][] {
   const out: string[][] = []
   let words: string[] = []
@@ -122,9 +123,39 @@ export function shellWords(command: string): string[][] {
     if (words.length) out.push(words)
     words = []
   }
+  // Heredoc delimiters whose bodies start after the current line.
+  const heredocs: { delimiter: string; isDashed: boolean }[] = []
+  const skipHeredocBodies = (from: number): number => {
+    let i = from
+    for (const { delimiter, isDashed } of heredocs.splice(0)) {
+      while (i < command.length) {
+        const end = command.indexOf('\n', i)
+        const line = command.slice(i, end < 0 ? undefined : end)
+        i = end < 0 ? command.length : end + 1
+        if ((isDashed ? line.replace(/^\t+/, '') : line) === delimiter) break
+      }
+    }
+    return i - 1
+  }
   for (let i = 0; i < command.length; i++) {
     const c = command[i]!
-    if (c === "'") {
+    if (c === '#' && !hasWord) {
+      const end = command.indexOf('\n', i)
+      i = (end < 0 ? command.length : end) - 1
+    } else if (c === '<' && command[i + 1] === '<' && command[i + 2] !== '<') {
+      endWord()
+      i += 2
+      const isDashed = command[i] === '-'
+      if (isDashed) i++
+      while (command[i] === ' ' || command[i] === '\t') i++
+      let delimiter = ''
+      while (i < command.length && !' \t\n;|&<>()'.includes(command[i]!)) {
+        if (command[i] !== "'" && command[i] !== '"' && command[i] !== '\\') delimiter += command[i]
+        i++
+      }
+      if (delimiter) heredocs.push({ delimiter, isDashed })
+      i--
+    } else if (c === "'") {
       const j = command.indexOf("'", i + 1)
       word += command.slice(i + 1, j < 0 ? undefined : j)
       hasWord = true
@@ -151,7 +182,10 @@ export function shellWords(command: string): string[][] {
         word += command[i]
         hasWord = true
       }
-    } else if (c === ';' || c === '|' || c === '&' || c === '\n') {
+    } else if (c === '\n') {
+      endCommand()
+      if (heredocs.length) i = skipHeredocBodies(i + 1)
+    } else if (c === ';' || c === '|' || c === '&' || c === '(' || c === ')') {
       endCommand()
     } else if (c === ' ' || c === '\t') {
       endWord()
@@ -239,19 +273,62 @@ function resolveDevice(arg: string, sims: Sim[]): string[] {
   return byName.length ? [byName[0]!.udid] : []
 }
 
-// What simulators a Bash command would act on, if any.
-export function targetsOf(command: string, sims: Sim[]): Target[] {
+// Words that run the command after them: shell keywords and wrappers.
+const PREFIXES = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{', 'time', 'exec', 'command', 'nohup', 'sudo', 'env', 'caffeinate', 'nice'])
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash'])
+const XCRUN_VALUE_OPTIONS = new Set(['-sdk', '--sdk', '-toolchain', '--toolchain'])
+
+function baseName(word: string): string {
+  return word.split('/').pop() ?? word
+}
+
+// The program a simple command runs and its arguments, past assignments
+// (`FOO=1`), keywords and wrappers (`env`, `time`, ...) and their options.
+export function commandOf(words: string[]): { program: string; args: string[] } | null {
+  let i = 0
+  let isAfterWrapper = false
+  while (i < words.length) {
+    const w = words[i]!
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || (isAfterWrapper && w.startsWith('-'))) i++
+    else if (PREFIXES.has(w)) {
+      isAfterWrapper = true
+      i++
+    } else break
+  }
+  if (i >= words.length) return null
+  let program = baseName(words[i]!)
+  let args = words.slice(i + 1)
+  if (program === 'xcrun') {
+    let j = 0
+    while (j < args.length && args[j]!.startsWith('-')) j += XCRUN_VALUE_OPTIONS.has(args[j]!) ? 2 : 1
+    if (j >= args.length) return null
+    program = baseName(args[j]!)
+    args = args.slice(j + 1)
+  }
+  return { program, args }
+}
+
+// What simulators a Bash command would act on, if any: only where `xcodebuild`
+// or `simctl` is the program run, never as an argument (`echo xcodebuild ...`).
+export function targetsOf(command: string, sims: Sim[], depth = 0): Target[] {
   const targets: Target[] = []
   for (const words of shellWords(command)) {
-    const xb = words.findIndex(w => w === 'xcodebuild' || w.endsWith('/xcodebuild'))
-    if (xb >= 0) {
-      const rest = words.slice(xb + 1)
-      if (!rest.some(w => TEST_ACTIONS.has(w))) continue
+    const cmd = commandOf(words)
+    if (!cmd) continue
+    const { program, args } = cmd
+    if (SHELLS.has(program) && depth < 3) {
+      // `bash -c '...'` runs its argument as a script.
+      const c = args.indexOf('-c')
+      if (c >= 0 && args[c + 1]) targets.push(...targetsOf(args[c + 1]!, sims, depth + 1))
+      continue
+    }
+    if (program === 'xcodebuild') {
+      if (!args.some(w => TEST_ACTIONS.has(w))) continue
       const udids: string[] = []
-      for (let i = 0; i < rest.length; i++) {
-        const w = rest[i]!
+      for (let i = 0; i < args.length; i++) {
+        const w = args[i]!
         let spec: string | undefined
-        if (w === '-destination') spec = rest[++i]
+        if (w === '-destination') spec = args[++i]
         else if (w.startsWith('-destination=')) spec = w.slice('-destination='.length)
         const udid = spec ? resolveDestination(spec, sims) : null
         if (udid && !udids.includes(udid)) udids.push(udid)
@@ -259,10 +336,9 @@ export function targetsOf(command: string, sims: Sim[]): Target[] {
       if (udids.length) targets.push({ udids, isClaiming: true, what: 'xcodebuild test' })
       continue
     }
-    const sc = words.indexOf('simctl')
-    if (sc >= 0) {
-      const sub = words[sc + 1]
-      const device = words[sc + 2]
+    if (program === 'simctl') {
+      const sub = args[0]
+      const device = args[1]
       if (!sub || !device || !SIMCTL_DEVICE_FIRST.has(sub)) continue
       const udids = resolveDevice(device, sims)
       if (udids.length) targets.push({ udids, isClaiming: !SIMCTL_CHECK_ONLY.has(sub) && device !== 'all', what: `simctl ${sub}` })
@@ -617,11 +693,20 @@ export const register: Register = (on, options) => {
         }
       }
     }
+    // Claim every target or none: a refused command keeps no claim it made.
+    const acquired: string[] = []
     for (const t of targets) {
       if (!t.isClaiming) continue
       for (const udid of t.udids) {
+        if (acquired.includes(udid)) continue
+        const wasMine = holderOf(udid, b.claims, me, b.at, staleMinutes).kind === 'yours'
         const outcome = await claimSim($, udid, t.what)
-        if (!outcome.ok) return { deny: `sim-board: ${udid} was just claimed by ${outcome.holder.label}; pick another with ${tool('sims_claim')}.` }
+        if (!outcome.ok) {
+          for (const got of acquired) await releaseSim($, got)
+          void refresh($).catch(() => {})
+          return { deny: `sim-board: ${udid} was just claimed by ${outcome.holder.label}; pick another with ${tool('sims_claim')}.` }
+        }
+        if (!wasMine) acquired.push(udid)
       }
     }
     void refresh($).catch(() => {})

@@ -15,7 +15,13 @@ const NOW = 1_000_000_000
 // and claimctl.py's protocol answered from that store (claimctl_test.py tests
 // the script itself, locking included). `dirs` maps a claim directory to its
 // owner file (null: not written yet); `mtime` dates such a directory.
-function engine(on: any, dirs: Map<string, string | null>, ran: string[][], mtime = new Map<string, number>()) {
+function engine(
+  on: any,
+  dirs: Map<string, string | null>,
+  ran: string[][],
+  mtime = new Map<string, number>(),
+  beforeCtl: (command: string, udid: string) => void = () => {},
+) {
   const done = (exitCode = 0, stdout = '') => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
   const name = (path: string) => path.slice(ROOT.length + 1).split('/')[0]!
   const entry = (udid: string) => {
@@ -53,6 +59,7 @@ function engine(on: any, dirs: Map<string, string | null>, ran: string[][], mtim
     if (argv[1] === 'simctl' && argv[2] === 'list') return done(0, SIMCTL)
     if (argv[0] === 'python3' && argv[1]!.endsWith('/hooks/claimctl.py')) {
       expect(argv[3]).toBe(ROOT)
+      beforeCtl(argv[2]!, argv[4]!)
       return done(0, JSON.stringify(claimctl(argv[2]!, argv[4]!, JSON.parse(argv[5]!))))
     }
     return done()
@@ -194,4 +201,21 @@ test('a line continuation before the destination is still guarded', async ($, on
 
   const ran = await $.tool.call({ tool: 'Bash', command: "xcodebuild test -scheme App \\\n  -destination 'platform=iOS Simulator,id=BBBB-26'" })
   expect(ran.deny).toContain('in use by shop (feat/cart)')
+})
+
+test('a refused multi-simulator command keeps none of the claims it made', async ($, on) => {
+  const dirs = new Map<string, string | null>()
+  // Another session claims the second target between the check and the claim.
+  engine(on, dirs, [], new Map(), (command, udid) => {
+    if (command === 'claim' && udid === 'BBBB-26') dirs.set('BBBB-26', other)
+  })
+  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
+
+  const ran = await $.tool.call({
+    tool: 'Bash',
+    command: "xcodebuild test -destination 'platform=iOS Simulator,id=CCCC-26' -destination 'platform=iOS Simulator,id=BBBB-26'",
+  })
+  expect(ran.deny).toContain('was just claimed by shop (feat/cart)')
+  expect(dirs.has('CCCC-26')).toBe(false)
+  expect(dirs.get('BBBB-26')).toBe(other)
 })
