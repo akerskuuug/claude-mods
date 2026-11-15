@@ -201,3 +201,28 @@ test('a line continuation before the destination is still guarded', async ($, on
   const ran = await $.tool.call({ tool: 'Bash', command: "xcodebuild test -scheme App \\\n  -destination 'platform=iOS Simulator,id=BBBB-26'" })
   expect(ran.deny).toContain('in use by shop (feat/cart)')
 })
+
+test('a takeover leaves alone a stale owner that renewed its heartbeat meanwhile', async ($, on) => {
+  const dirs = new Map<string, string | null>([['CCCC-26', stale]])
+  const renewed = JSON.stringify({ ...JSON.parse(stale), heartbeatAt: NOW })
+  // The old owner checks in just before this session gets the lock.
+  engine(on, dirs, [], { onLock: () => void dirs.set('CCCC-26', renewed) })
+  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
+
+  const claimed = await $.tool.call({ tool: 'mcp__sim-board__sims_claim', udid: 'CCCC-26', boot: false })
+  expect(String(claimed.result)).toContain('held by old (main)')
+  expect(dirs.get('CCCC-26')).toBe(renewed)
+})
+
+test('releasing leaves alone a claim another session took over meanwhile', async ($, on) => {
+  const mine = JSON.stringify({ sessionId: 'me', label: 'app', claimedAt: NOW - 3_600_000, heartbeatAt: NOW - 20 * 60_000 })
+  const theirs = JSON.stringify({ sessionId: 'third', label: 'web (main)', claimedAt: NOW, heartbeatAt: NOW })
+  const dirs = new Map<string, string | null>([['CCCC-26', mine]])
+  // Someone takes over our stale claim between our read and our lock.
+  engine(on, dirs, [], { onLock: () => void dirs.set('CCCC-26', theirs) })
+  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
+
+  const released = await $.tool.call({ tool: 'mcp__sim-board__sims_release' })
+  expect(String(released.result)).toBe('This session held no simulators.')
+  expect(dirs.get('CCCC-26')).toBe(theirs)
+})

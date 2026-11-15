@@ -495,14 +495,30 @@ async function withTakeoverLock<T>($: EngineInterface, udid: string, fn: () => P
   }
 }
 
-// Removes a claim directory only if, under the lock, it still holds what the
-// caller saw: a fresh claim made since is left alone.
-async function takeOver($: EngineInterface, udid: string, seen: Entry): Promise<boolean> {
+// Removes a claim directory only if, under the lock, it is still what the
+// caller saw and still takeable: a fresh claim made since, or an owner that
+// renewed its heartbeat meanwhile, is left alone.
+async function takeOver($: EngineInterface, udid: string, seen: Entry, force: boolean): Promise<boolean> {
+  const { staleMinutes } = await context($)
+  const me = await $.session.id()
   const done = await withTakeoverLock($, udid, async () => {
     const now = await readEntry($, udid)
     if (now.kind === 'none') return true
-    if (!sameEntry(now, seen)) return false
+    if (!sameEntry(now, seen) || !isTakeable(now, me, await $.clock.now(), staleMinutes, force)) return false
     await removeClaim($, udid)
+    return true
+  })
+  return done === true
+}
+
+// Renews or removes one of our own claims under the same lock as a takeover, so
+// neither lands on a claim another session has taken over meanwhile.
+async function whileMine($: EngineInterface, udid: string, fn: (claim: Claim) => Promise<void>): Promise<boolean> {
+  const me = await $.session.id()
+  const done = await withTakeoverLock($, udid, async () => {
+    const now = await readEntry($, udid)
+    if (now.kind !== 'claim' || now.claim.sessionId !== me) return false
+    await fn(now.claim)
     return true
   })
   return done === true
@@ -531,11 +547,12 @@ async function claimSim($: EngineInterface, udid: string, purpose?: string, forc
     last = await readEntry($, udid)
     if (last.kind === 'none') continue // released meanwhile: try again
     if (last.kind === 'claim' && last.claim.sessionId === me) {
-      await writeOwner($, udid, last.claim.claimedAt, purpose ?? last.claim.purpose)
-      return { ok: true }
+      if (await whileMine($, udid, c => writeOwner($, udid, c.claimedAt, purpose ?? c.purpose))) return { ok: true }
+      last = await readEntry($, udid)
+      continue
     }
     if (!isTakeable(last, me, await $.clock.now(), staleMinutes, force)) break
-    if (!(await takeOver($, udid, last))) {
+    if (!(await takeOver($, udid, last, force))) {
       last = await readEntry($, udid)
       if (last.kind !== 'none') break
     }
@@ -549,22 +566,25 @@ async function releaseSim($: EngineInterface, udid: string, force = false): Prom
   const current = await readEntry($, udid)
   if (current.kind === 'none') return true
   if (current.kind === 'claim' && current.claim.sessionId === me) {
-    await removeClaim($, udid)
+    await whileMine($, udid, () => removeClaim($, udid))
     return true
   }
-  return force ? takeOver($, udid, current) : false
+  return force ? takeOver($, udid, current, true) : false
 }
 
 async function releaseMine($: EngineInterface): Promise<string[]> {
   const me = await $.session.id()
   const mine = (await readClaims($)).filter(c => c.sessionId === me)
-  for (const c of mine) await removeClaim($, c.udid)
-  return mine.map(c => c.udid)
+  const released: string[] = []
+  for (const c of mine) if (await whileMine($, c.udid, () => removeClaim($, c.udid))) released.push(c.udid)
+  return released
 }
 
 async function heartbeat($: EngineInterface): Promise<void> {
   const me = await $.session.id()
-  for (const c of await readClaims($)) if (c.sessionId === me) await writeOwner($, c.udid, c.claimedAt, c.purpose)
+  for (const c of await readClaims($)) {
+    if (c.sessionId === me) await whileMine($, c.udid, mine => writeOwner($, c.udid, mine.claimedAt, mine.purpose))
+  }
 }
 
 // ---------------------------------------------------------------------------
