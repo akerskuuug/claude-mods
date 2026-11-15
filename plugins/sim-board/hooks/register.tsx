@@ -158,15 +158,36 @@ export function shellWords(command: string, depth = 0): string[][] {
     words = []
   }
   // Heredoc delimiters whose bodies start after the current line.
-  const heredocs: { delimiter: string; isDashed: boolean }[] = []
+  const heredocs: { delimiter: string; isDashed: boolean; isQuoted: boolean }[] = []
+  // Skips heredoc bodies; a body whose delimiter is unquoted still runs its
+  // command substitutions, so those are noted.
   const skipHeredocBodies = (from: number): number => {
     let i = from
-    for (const { delimiter, isDashed } of heredocs.splice(0)) {
+    for (const { delimiter, isDashed, isQuoted } of heredocs.splice(0)) {
       while (i < command.length) {
         const end = command.indexOf('\n', i)
-        const line = command.slice(i, end < 0 ? undefined : end)
-        i = end < 0 ? command.length : end + 1
-        if ((isDashed ? line.replace(/^\t+/, '') : line) === delimiter) break
+        const lineEnd = end < 0 ? command.length : end
+        const line = command.slice(i, lineEnd)
+        if ((isDashed ? line.replace(/^\t+/, '') : line) === delimiter) {
+          i = lineEnd + 1
+          break
+        }
+        let next = lineEnd + 1
+        if (!isQuoted) {
+          for (let j = i; j < lineEnd; j++) {
+            if (command[j] === '\\') j++
+            else if ((command[j] === '$' && command[j + 1] === '(') || command[j] === '`') {
+              j = substitution(j)
+              // A substitution may span lines; the body resumes after it.
+              if (j >= lineEnd) {
+                const after = command.indexOf('\n', j)
+                next = after < 0 ? command.length : after + 1
+                break
+              }
+            }
+          }
+        }
+        i = next
       }
     }
     return i - 1
@@ -187,11 +208,13 @@ export function shellWords(command: string, depth = 0): string[][] {
       if (isDashed) i++
       while (command[i] === ' ' || command[i] === '\t') i++
       let delimiter = ''
+      let isQuoted = false
       while (i < command.length && !' \t\n;|&<>()'.includes(command[i]!)) {
-        if (command[i] !== "'" && command[i] !== '"' && command[i] !== '\\') delimiter += command[i]
+        if (command[i] === "'" || command[i] === '"' || command[i] === '\\') isQuoted = true
+        else delimiter += command[i]
         i++
       }
-      if (delimiter) heredocs.push({ delimiter, isDashed })
+      if (delimiter) heredocs.push({ delimiter, isDashed, isQuoted })
       i--
     } else if (c === "'") {
       const j = command.indexOf("'", i + 1)
@@ -231,6 +254,10 @@ export function shellWords(command: string, depth = 0): string[][] {
     } else if (c === '\n') {
       endCommand()
       if (heredocs.length) i = skipHeredocBodies(i + 1)
+    } else if (c === '&' && (command[i - 1] === '>' || command[i - 1] === '<' || command[i + 1] === '>')) {
+      // Part of a redirection (`2>&1`, `&>`, `>&2`), not a command separator.
+      word += c
+      hasWord = true
     } else if (c === ';' || c === '|' || c === '&' || c === '(' || c === ')') {
       endCommand()
     } else if (c === ' ' || c === '\t') {
@@ -341,11 +368,27 @@ function baseName(word: string): string {
   return word.split('/').pop() ?? word
 }
 
+// A redirection: an optional fd or `&`, the operator, and a target that is
+// either attached (`>log`, `2>&1`) or the next word (`> log`).
+const REDIRECTION = /^(?:\d+|&)?(?:>>|>\||>&|<&|<>|>|<)(.*)$/
+
+// Redirections may stand anywhere in a simple command, the program's place
+// included (`> log xcodebuild test`); none of them is the program or an argument.
+export function withoutRedirections(words: string[]): string[] {
+  const out: string[] = []
+  for (let i = 0; i < words.length; i++) {
+    const m = REDIRECTION.exec(words[i]!)
+    if (!m) out.push(words[i]!)
+    else if (m[1] === '') i++
+  }
+  return out
+}
+
 // The program a simple command runs and its arguments, past assignments
 // (`FOO=1`), keywords, wrappers (`env`, `sudo`, `time`, ...) with their options
 // and option values, and xcrun's options. Null when nothing runs (`command -v`).
 export function commandOf(input: string[]): { program: string; args: string[] } | null {
-  let words = input
+  let words = withoutRedirections(input)
   let i = 0
   while (i < words.length) {
     const w = words[i]!

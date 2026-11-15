@@ -12,6 +12,7 @@ import {
   runtimeName,
   shellScript,
   shellWords,
+  withoutRedirections,
   summarize,
   targetsOf,
   filterSims,
@@ -122,6 +123,26 @@ describe('commands', () => {
     expect(boot('x=$(xcrun simctl boot CCCC-26); echo $x')).toEqual([['CCCC-26']])
     expect(boot(`echo "$(echo "$(xcrun simctl boot CCCC-26)")"`)).toEqual([['CCCC-26']])
     expect(boot("echo '$(xcrun simctl boot CCCC-26)'")).toEqual([])
+  })
+
+  test('skips redirections wherever they stand', async () => {
+    const boot = (cmd: string) => targetsOf(cmd, sims).map(t => t.udids)
+    expect(boot("> /tmp/test.log xcodebuild test -destination 'id=CCCC-26'")).toEqual([['CCCC-26']])
+    expect(boot("2>&1 >>log xcrun simctl boot CCCC-26")).toEqual([['CCCC-26']])
+    expect(boot("xcodebuild test -destination 'id=CCCC-26' 2>&1 | tee log")).toEqual([['CCCC-26']])
+    expect(boot("xcodebuild test &> log -destination 'id=CCCC-26'")).toEqual([['CCCC-26']])
+    expect(shellWords('a 2>&1 &>x >&2 b')).toEqual([['a', '2>&1', '&>x', '>&2', 'b']])
+    expect(withoutRedirections(['>', 'log', 'xcodebuild', '2>&1', '<in', 'test'])).toEqual(['xcodebuild', 'test'])
+  })
+
+  test('checks substitutions in heredocs whose delimiter is unquoted', async () => {
+    const boot = (cmd: string) => targetsOf(cmd, sims).map(t => t.udids)
+    expect(boot('cat <<EOF\nhello $(xcrun simctl boot CCCC-26)\nEOF')).toEqual([['CCCC-26']])
+    expect(boot('cat <<EOF\n`xcrun simctl boot CCCC-26`\nEOF\necho done')).toEqual([['CCCC-26']])
+    expect(boot("cat <<'EOF'\n$(xcrun simctl boot CCCC-26)\nEOF")).toEqual([])
+    expect(boot('cat <<"EOF"\n$(xcrun simctl boot CCCC-26)\nEOF')).toEqual([])
+    expect(boot('cat <<EOF\n\\$(xcrun simctl boot CCCC-26)\nEOF')).toEqual([])
+    expect(boot('cat <<EOF\nxcrun simctl boot CCCC-26\nEOF')).toEqual([])
   })
 
   test('a here-string does not swallow the commands after it', async () => {
