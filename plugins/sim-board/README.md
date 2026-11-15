@@ -25,7 +25,7 @@ In `/config` (or `pluginConfigs` in settings):
 | Field | Default | Does |
 | --- | --- | --- |
 | `filter` | empty | Only list and pick simulators whose name or runtime matches this regular expression (case-insensitive), e.g. `iPhone.*\|iOS 26`. The guard still checks every simulator. |
-| `staleMinutes` | `15` | How long a claim survives without its session checking in |
+| `staleMinutes` | `15` | How long a claim survives without its session checking in (at least 3: sessions check in every minute) |
 
 Needs Xcode's command line tools (`xcrun simctl`, and the `python3` they ship). On a machine without them the mod shows the error in the pane and adds no tools or guard.
 

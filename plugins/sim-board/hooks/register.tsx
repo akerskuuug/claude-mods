@@ -11,6 +11,8 @@ const board = atom(BOARD, null as Board | null)
 const MINUTE = 60_000
 const REFRESH_MS = 15_000
 const HEARTBEAT_MS = MINUTE
+// Well above HEARTBEAT_MS, so a session that is merely slow keeps its claims.
+const MIN_STALE_MINUTES = 3
 // A claim directory with no owner file yet is someone mid-claim; past this it is debris.
 const ORPHAN_MS = MINUTE
 
@@ -105,11 +107,43 @@ export function formatAge(ms: number): string {
   return m % 60 ? `${h}h${m % 60}m` : `${h}h`
 }
 
+// The index of the `)` that closes the `$(` whose `(` is at `open`, skipping
+// quoted text and nested parentheses; the end of input if it never closes.
+function closingParen(command: string, open: number): number {
+  let depth = 0
+  for (let i = open; i < command.length; i++) {
+    const c = command[i]!
+    if (c === '\\') i++
+    else if (c === "'") i = command.indexOf("'", i + 1) < 0 ? command.length : command.indexOf("'", i + 1)
+    else if (c === '(') depth++
+    else if (c === ')' && --depth === 0) return i
+  }
+  return command.length
+}
+
+function closingBacktick(command: string, open: number): number {
+  for (let i = open + 1; i < command.length; i++) {
+    if (command[i] === '\\') i++
+    else if (command[i] === '`') return i
+  }
+  return command.length
+}
+
 // Splits a shell command into words per simple command, honouring quotes and
 // backslashes; `&&`, `||`, `;`, `|`, `(`, `)` and newlines end a command.
-// Comments and heredoc bodies are data, not commands, and are dropped.
-export function shellWords(command: string): string[][] {
+// Comments, heredoc bodies and here-strings are data, not commands, and are
+// dropped; command substitutions (`$(...)`, backticks), quoted or not, run, so
+// their commands are listed after the rest.
+export function shellWords(command: string, depth = 0): string[][] {
   const out: string[][] = []
+  const substitutions: string[] = []
+  // At `$(` or a backtick at `i`: note the command inside, return where it ends.
+  const substitution = (i: number): number => {
+    const isBacktick = command[i] === '`'
+    const end = isBacktick ? closingBacktick(command, i) : closingParen(command, i + 1)
+    substitutions.push(command.slice(i + (isBacktick ? 1 : 2), end))
+    return end
+  }
   let words: string[] = []
   let word = ''
   let hasWord = false
@@ -142,7 +176,11 @@ export function shellWords(command: string): string[][] {
     if (c === '#' && !hasWord) {
       const end = command.indexOf('\n', i)
       i = (end < 0 ? command.length : end) - 1
-    } else if (c === '<' && command[i + 1] === '<' && command[i + 2] !== '<') {
+    } else if (c === '<' && command.startsWith('<<<', i)) {
+      // A here-string: its word is data fed to the command, not a heredoc.
+      endWord()
+      i += 2
+    } else if (c === '<' && command[i + 1] === '<') {
       endWord()
       i += 2
       const isDashed = command[i] === '-'
@@ -171,6 +209,10 @@ export function shellWords(command: string): string[][] {
             continue
           }
           if (!'"\\$`'.includes(command[i]!)) word += '\\'
+        } else if ((command[i] === '$' && command[i + 1] === '(') || command[i] === '`') {
+          i = substitution(i) + 1
+          word += '$(…)'
+          continue
         }
         word += command[i]
         i++
@@ -182,6 +224,10 @@ export function shellWords(command: string): string[][] {
         word += command[i]
         hasWord = true
       }
+    } else if ((c === '$' && command[i + 1] === '(') || c === '`') {
+      i = substitution(i)
+      word += '$(…)'
+      hasWord = true
     } else if (c === '\n') {
       endCommand()
       if (heredocs.length) i = skipHeredocBodies(i + 1)
@@ -195,6 +241,7 @@ export function shellWords(command: string): string[][] {
     }
   }
   endCommand()
+  if (depth < 4) for (const sub of substitutions) out.push(...shellWords(sub, depth + 1))
   return out
 }
 
@@ -610,7 +657,8 @@ const toolRe = (name: string) => new RegExp(`^mcp__${PLUGIN}__${name}$`)
 
 export const register: Register = (on, options) => {
   const filter = typeof options.filter === 'string' ? options.filter : ''
-  const staleMinutes = typeof options.staleMinutes === 'number' && options.staleMinutes > 0 ? options.staleMinutes : 15
+  // Claims are renewed every minute, so a live one must never look stale sooner.
+  const staleMinutes = Math.max(MIN_STALE_MINUTES, typeof options.staleMinutes === 'number' ? options.staleMinutes : 15)
   // The filter narrows what is listed and picked, never what the guard checks.
   const view = (b: Board): Board => ({ ...b, sims: filterSims(b.sims, filter) })
 

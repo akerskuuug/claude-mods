@@ -219,3 +219,15 @@ test('a refused multi-simulator command keeps none of the claims it made', async
   expect(dirs.has('CCCC-26')).toBe(false)
   expect(dirs.get('BBBB-26')).toBe(other)
 })
+
+test('a stale threshold below the check-in interval is raised to the minimum', { options: { staleMinutes: 0.5 } }, async ($, on) => {
+  // Checked in 31 seconds ago: stale at 0.5 minutes, live at the 3-minute minimum.
+  const recent = JSON.stringify({ sessionId: 'other', label: 'shop (feat/cart)', claimedAt: NOW - 600_000, heartbeatAt: NOW - 31_000 })
+  const dirs = new Map<string, string | null>([['CCCC-26', recent]])
+  engine(on, dirs, [])
+  await $.session.start({ cwd: '/r/app', surface: 'terminal', isInteractive: true })
+
+  const claimed = await $.tool.call({ tool: 'mcp__sim-board__sims_claim', udid: 'CCCC-26', boot: false })
+  expect(String(claimed.result)).toContain('held by shop (feat/cart)')
+  expect(dirs.get('CCCC-26')).toBe(recent)
+})

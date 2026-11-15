@@ -2,7 +2,9 @@
   "name": "sim-board",
   "version": "0.1.0",
   "description": "A shared board of iOS Simulators for UI tests: which are booted, free, or claimed by which Claude Code session, with claim/release tools and a guard that stops sessions testing on each other's simulators",
-  "author": { "name": "Viktor Åkerskog" },
+  "author": {
+    "name": "Viktor Åkerskog"
+  },
   "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -15,7 +17,7 @@
     "staleMinutes": {
       "type": "number",
       "title": "Stale claim minutes",
-      "description": "A claim whose session has not checked in for this many minutes may be taken over",
+      "description": "A claim whose session has not checked in for this many minutes may be taken over (at least 3; sessions check in every minute)",
       "default": 15
     }
   }

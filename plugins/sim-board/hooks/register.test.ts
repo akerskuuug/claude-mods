@@ -115,6 +115,20 @@ describe('commands', () => {
     expect(shellScript(['-l', 'x'])).toBe(null)
   })
 
+  test('checks command substitutions, quoted or not', async () => {
+    const boot = (cmd: string) => targetsOf(cmd, sims).map(t => t.udids)
+    expect(boot(`output="$(xcodebuild test -destination 'id=CCCC-26' 2>&1)"`)).toEqual([['CCCC-26']])
+    expect(boot('echo "booted: `xcrun simctl boot CCCC-26`"')).toEqual([['CCCC-26']])
+    expect(boot('x=$(xcrun simctl boot CCCC-26); echo $x')).toEqual([['CCCC-26']])
+    expect(boot(`echo "$(echo "$(xcrun simctl boot CCCC-26)")"`)).toEqual([['CCCC-26']])
+    expect(boot("echo '$(xcrun simctl boot CCCC-26)'")).toEqual([])
+  })
+
+  test('a here-string does not swallow the commands after it', async () => {
+    expect(targetsOf("cat <<<'hello'\nxcrun simctl boot CCCC-26", sims).map(t => t.udids)).toEqual([['CCCC-26']])
+    expect(targetsOf('cat <<< "xcrun simctl boot CCCC-26"', sims)).toEqual([])
+  })
+
   test('ignores simulator commands that are only data', async () => {
     expect(targetsOf("echo xcodebuild test -destination 'id=CCCC-26'", sims)).toEqual([])
     expect(targetsOf("git commit -m 'xcrun simctl boot CCCC-26'", sims)).toEqual([])
