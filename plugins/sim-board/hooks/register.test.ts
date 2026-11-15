@@ -10,6 +10,7 @@ import {
   pickFree,
   resolveDestination,
   runtimeName,
+  shellScript,
   shellWords,
   summarize,
   targetsOf,
@@ -100,6 +101,18 @@ describe('commands', () => {
     expect(boot('nice -n 5 time -o t.txt caffeinate -t 60 xcrun simctl boot CCCC-26')).toEqual([['CCCC-26']])
     expect(boot('command -v xcodebuild')).toEqual([])
     expect(commandOf(['env', '-u', 'CI'])).toBe(null)
+  })
+
+  test('finds the script a shell runs with -c, flags combined or not', async () => {
+    const boot = (cmd: string) => targetsOf(cmd, sims).map(t => t.udids)
+    expect(boot('bash -lc "xcrun simctl boot CCCC-26"')).toEqual([['CCCC-26']])
+    expect(boot(`/bin/zsh -ec "xcodebuild test -destination 'id=CCCC-26'"`)).toEqual([['CCCC-26']])
+    expect(boot('bash -c -e "xcrun simctl boot CCCC-26"')).toEqual([['CCCC-26']])
+    expect(boot('bash -o pipefail -c "xcrun simctl boot CCCC-26"')).toEqual([['CCCC-26']])
+    expect(boot('bash --norc -c "xcrun simctl boot CCCC-26"')).toEqual([['CCCC-26']])
+    expect(boot('bash -l script.sh "xcrun simctl boot CCCC-26"')).toEqual([])
+    expect(shellScript(['-lc', 'x'])).toBe('x')
+    expect(shellScript(['-l', 'x'])).toBe(null)
   })
 
   test('ignores simulator commands that are only data', async () => {

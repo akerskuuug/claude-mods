@@ -347,6 +347,25 @@ export function commandOf(input: string[]): { program: string; args: string[] } 
   return { program, args }
 }
 
+// The script a shell runs with -c: like the shell, take `c` anywhere in a
+// group of short options (`-lc`, `-ec`), and the script as the first word that
+// is not an option (`-o name` and `-O name` take theirs).
+export function shellScript(args: string[]): string | null {
+  let hasC = false
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!
+    if (a === '--' || a === '-') return hasC ? (args[i + 1] ?? null) : null
+    if (/^[-+][A-Za-z]+$/.test(a)) {
+      if (a[0] === '-' && a.includes('c')) hasC = true
+      if (/[oO]$/.test(a)) i++
+      continue
+    }
+    if (a.startsWith('--')) continue
+    return hasC ? a : null
+  }
+  return null
+}
+
 // What simulators a Bash command would act on, if any: only where `xcodebuild`
 // or `simctl` is the program run, never as an argument (`echo xcodebuild ...`).
 export function targetsOf(command: string, sims: Sim[], depth = 0): Target[] {
@@ -356,9 +375,9 @@ export function targetsOf(command: string, sims: Sim[], depth = 0): Target[] {
     if (!cmd) continue
     const { program, args } = cmd
     if (SHELLS.has(program) && depth < 3) {
-      // `bash -c '...'` runs its argument as a script.
-      const c = args.indexOf('-c')
-      if (c >= 0 && args[c + 1]) targets.push(...targetsOf(args[c + 1]!, sims, depth + 1))
+      // `bash -c '...'`, also `-lc`, `-ec`, ...: runs its argument as a script.
+      const script = shellScript(args)
+      if (script) targets.push(...targetsOf(script, sims, depth + 1))
       continue
     }
     if (program === 'xcodebuild') {
