@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 import {
+  commandOf,
   formatAge,
   holderOf,
   isStale,
@@ -88,6 +89,17 @@ describe('commands', () => {
     ])
     expect(targetsOf("(cd app && /usr/bin/xcodebuild test -destination 'id=CCCC-26')", sims).map(t => t.udids)).toEqual([['CCCC-26']])
     expect(targetsOf(`bash -c "xcodebuild test -destination 'id=CCCC-26'"`, sims).map(t => t.udids)).toEqual([['CCCC-26']])
+  })
+
+  test('skips wrappers and the values their options take', async () => {
+    const boot = (cmd: string) => targetsOf(cmd, sims).map(t => t.udids)
+    expect(boot('env -u CI xcrun simctl boot CCCC-26')).toEqual([['CCCC-26']])
+    expect(boot('env --unset CI -C /tmp FOO=1 xcrun simctl boot CCCC-26')).toEqual([['CCCC-26']])
+    expect(boot("env -S 'xcrun simctl boot CCCC-26'")).toEqual([['CCCC-26']])
+    expect(boot("sudo -u ci -- xcodebuild test -destination 'id=CCCC-26'")).toEqual([['CCCC-26']])
+    expect(boot('nice -n 5 time -o t.txt caffeinate -t 60 xcrun simctl boot CCCC-26')).toEqual([['CCCC-26']])
+    expect(boot('command -v xcodebuild')).toEqual([])
+    expect(commandOf(['env', '-u', 'CI'])).toBe(null)
   })
 
   test('ignores simulator commands that are only data', async () => {

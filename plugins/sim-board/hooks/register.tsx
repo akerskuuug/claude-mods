@@ -273,8 +273,20 @@ function resolveDevice(arg: string, sims: Sim[]): string[] {
   return byName.length ? [byName[0]!.udid] : []
 }
 
-// Words that run the command after them: shell keywords and wrappers.
-const PREFIXES = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{', 'time', 'exec', 'command', 'nohup', 'sudo', 'env', 'caffeinate', 'nice'])
+// Shell keywords that run the command after them.
+const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{'])
+// Wrappers that run the command after them, with the options of each that take
+// a value as the next word (`env -u NAME`, `sudo -u USER`).
+const WRAPPERS: Record<string, Set<string>> = {
+  env: new Set(['-u', '--unset', '-C', '--chdir', '-S', '--split-string']),
+  sudo: new Set(['-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt', '-C', '--close-from', '-D', '--chdir', '-r', '--role', '-t', '--type', '-U', '--other-user', '-T', '--command-timeout']),
+  time: new Set(['-f', '--format', '-o', '--output']),
+  nice: new Set(['-n', '--adjustment']),
+  caffeinate: new Set(['-t', '-w']),
+  exec: new Set(['-a']),
+  command: new Set(),
+  nohup: new Set(),
+}
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash'])
 const XCRUN_VALUE_OPTIONS = new Set(['-sdk', '--sdk', '-toolchain', '--toolchain'])
 
@@ -283,17 +295,44 @@ function baseName(word: string): string {
 }
 
 // The program a simple command runs and its arguments, past assignments
-// (`FOO=1`), keywords and wrappers (`env`, `time`, ...) and their options.
-export function commandOf(words: string[]): { program: string; args: string[] } | null {
+// (`FOO=1`), keywords, wrappers (`env`, `sudo`, `time`, ...) with their options
+// and option values, and xcrun's options. Null when nothing runs (`command -v`).
+export function commandOf(input: string[]): { program: string; args: string[] } | null {
+  let words = input
   let i = 0
-  let isAfterWrapper = false
   while (i < words.length) {
     const w = words[i]!
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || (isAfterWrapper && w.startsWith('-'))) i++
-    else if (PREFIXES.has(w)) {
-      isAfterWrapper = true
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || KEYWORDS.has(w)) {
       i++
-    } else break
+      continue
+    }
+    const takesValue = WRAPPERS[baseName(w)]
+    if (!takesValue) break
+    const wrapper = baseName(w)
+    i++
+    while (i < words.length) {
+      const o = words[i]!
+      if (o === '--') {
+        i++
+        break
+      }
+      if (wrapper === 'env' && /^[A-Za-z_][A-Za-z0-9_]*=/.test(o)) {
+        i++
+        continue
+      }
+      if (!o.startsWith('-') || o === '-') break
+      // `command -v name` / `-V` only describe a command; nothing runs.
+      if (wrapper === 'command' && (o === '-v' || o === '-V')) return null
+      // `env -S 'prog args'` splits its value into the command to run.
+      if (wrapper === 'env' && (o === '-S' || o === '--split-string' || o.startsWith('--split-string='))) {
+        const value = o.includes('=') ? o.slice(o.indexOf('=') + 1) : words[i + 1]
+        const split = value ? (shellWords(value)[0] ?? []) : []
+        words = [...split, ...words.slice(i + (o.includes('=') ? 1 : 2))]
+        i = 0
+        break
+      }
+      i += takesValue.has(o) ? 2 : 1
+    }
   }
   if (i >= words.length) return null
   let program = baseName(words[i]!)
