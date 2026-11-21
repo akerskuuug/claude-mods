@@ -8,6 +8,7 @@ A collection of Claude Code mods, published as a plugin marketplace.
 | --- | --- |
 | [usage-meter](plugins/usage-meter) | Directory, branch, worktree, model, effort and prompt-cache warmth, with 5h and weekly limits (subscription) or cost (pay-per-token), above the prompt; context below it |
 | [context-weather](plugins/context-weather) | A lo-fi pixel weather window beside the conversation: clear skies with an empty context, a thunderstorm with a full one, day or night by your clock |
+| [sim-board](plugins/sim-board) | A shared board of iOS Simulators for UI tests: which are booted, free, or claimed by which Claude Code session, with claim/release tools and a guard against testing on another session's simulator |
 
 ## Install
 
