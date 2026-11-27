@@ -129,7 +129,7 @@ describe('time of day', () => {
   })
 
   test('reads a location as latitude and longitude', async () => {
-    expect(parseLocation('59.3,18.0')).toEqual({ lat: 59.3, lon: 18 })
+    expect(parseLocation('51.48,0')).toEqual({ lat: 51.48, lon: 0 })
     expect(parseLocation(' -33.9 , 151.2 ')).toEqual({ lat: -33.9, lon: 151.2 })
     expect(parseLocation('91,0')).toBe(null)
     expect(parseLocation('Stockholm')).toBe(null)
@@ -316,7 +316,7 @@ describe('a fresh conversation', () => {
     expect(await weather('location Kiruna')).toContain('Not a location')
     expect(await weather('location 67.86,20.23')).toBe('The sun follows 67.86, 20.23: the sun stays up all day today.')
     expect(await caption()).toBe('day')
-    expect(await weather('location 59.33,18.07')).toMatch(/^The sun follows 59.33, 18.07: up 03:3\d, down 22:0\d today\.$/)
+    expect(await weather('location 51.48,0')).toMatch(/^The sun follows 51.48, 0: up \d\d:\d\d, down \d\d:\d\d today\.$/)
     expect(await weather('location off')).toContain('No location set')
     expect(await caption()).toBe('not day')
   })

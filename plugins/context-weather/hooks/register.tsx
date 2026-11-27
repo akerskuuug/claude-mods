@@ -88,7 +88,7 @@ export function sunDay(ms: number, lat: number, lon: number, offsetMinutes: numb
   return { rise: noon - h, set: noon + h, twilight: half(-6) - h }
 }
 
-/** `59.3,18.0` (latitude, longitude) as numbers; null for anything else. */
+/** `51.48,0` (latitude, longitude) as numbers; null for anything else. */
 export function parseLocation(text: string): { lat: number; lon: number } | null {
   const m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(text)
   if (!m) return null
@@ -1235,7 +1235,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'weather',
       description:
-        'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock, "location 59.3,18.0" follows the sun there, "visit <name>" sends a visitor by',
+        'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock, "location 51.48,0" follows the sun there, "visit <name>" sends a visitor by',
       argumentHint: '[at HH:MM|now|location <lat,lon>|off|visit <visitor>]',
     })
     await resetWeather($)
@@ -1305,12 +1305,12 @@ export const register: Register = on => {
         await $.store.delete('location')
       } else if (text) {
         const wanted = parseLocation(text)
-        if (!wanted) return { text: `Not a location: ${text}. Try /weather location 59.3,18.0 (latitude, longitude).` }
+        if (!wanted) return { text: `Not a location: ${text}. Try /weather location 51.48,0 (latitude, longitude).` }
         place = wanted
         await $.store.set('location', `${wanted.lat},${wanted.lon}`)
       }
       await syncClock($)
-      if (!place) return { text: 'No location set: the sun rises at 6:00 and sets at 20:00. Set one with /weather location 59.3,18.0.' }
+      if (!place) return { text: 'No location set: the sun rises at 6:00 and sets at 20:00. Set one with /weather location 51.48,0.' }
       const today = isMidnightSun(sun)
         ? 'the sun stays up all day today'
         : sun.set <= sun.rise
