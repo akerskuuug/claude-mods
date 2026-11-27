@@ -6,6 +6,7 @@ import {
   daylight,
   encode,
   forecast,
+  formatClock,
   groundLine,
   localHour,
   parseLocation,
@@ -96,10 +97,7 @@ describe('time of day', () => {
   })
 
   test('works out sunrise and sunset from where you are', async () => {
-    const clock = (h: number) => {
-      const m = Math.round((((h % 24) + 24) % 24) * 60)
-      return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
-    }
+    const clock = formatClock
     const at = (date: string, lat: number, lon: number, offset: number) => sunDay(Date.parse(`${date}T12:00:00Z`), lat, lon, offset)
     // Stockholm, against the almanac.
     const midsummer = at('2026-06-21', 59.33, 18.07, 120)
@@ -278,16 +276,27 @@ describe('a fresh conversation', () => {
     expect(await caption()).toBe('night')
   })
 
-  test('CONTEXT_WEATHER_LOCATION brings the midnight sun to Kiruna', async ($, on) => {
-    // Midnight in Kiruna at midsummer: night by the default day, broad daylight by the real one.
+  test('a location set in an earlier session is read back from the store', async ($, on) => {
     mock.clock(on, { now: Date.parse('2026-06-21T22:00:00Z') })
-    let location: string | undefined
+    mock.store(on, { location: '67.86,20.23' })
     on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
     on('command.register', async () => ({ value: {} }) as never)
     on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [] } }) as never)
     on('process.run', async () => ({ value: { exitCode: 0, stdout: '+0200\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as never)
-    on('env.get', async () => ({ value: location }) as never)
-    on('classic.SessionStart', async () => ({}) as never)
+    await $.session.start({ cwd: '/', surface: 'terminal' } as never)
+    expect((await $.command.run({ command: 'weather', args: 'location' })).text).toBe(
+      'The sun follows 67.86, 20.23: the sun stays up all day today.',
+    )
+  })
+
+  test('/weather location brings the midnight sun to Kiruna', async ($, on) => {
+    // Midnight in Kiruna at midsummer: night by the default day, broad daylight by the real one.
+    mock.clock(on, { now: Date.parse('2026-06-21T22:00:00Z') })
+    mock.store(on)
+    on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+    on('command.register', async () => ({ value: {} }) as never)
+    on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [] } }) as never)
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: '+0200\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as never)
     const caption = async () => {
       const ui = await $.ui.mount({
         plugin: 'context-weather',
@@ -296,15 +305,20 @@ describe('a fresh conversation', () => {
         requestId: 'context-weather',
         props: { title: 'Weather', isFocused: false, bodyColumns: 30, placement: 'dock', scroll: { offset: 0, bodyRows: 20 } } as never,
       } as never)
-      const text = await ui.find({ type: 'Text', text: /clear skies/ })
+      const day = await ui.find({ type: 'Text', text: /^clear skies/ })
       await ui.unmount()
-      return text
+      return day ? 'day' : 'not day'
     }
+    const weather = async (args: string) => (await $.command.run({ command: 'weather', args })).text
     await $.session.start({ cwd: '/', surface: 'terminal' } as never)
-    expect(await caption()).toEqual(expect.objectContaining({ text: expect.stringMatching(/^night · /) }))
-    location = '67.86,20.23'
-    await $.classic.SessionStart({ source: 'clear' } as never)
-    expect(await caption()).toEqual(expect.objectContaining({ text: expect.stringMatching(/^clear skies/) }))
+    expect(await caption()).toBe('not day')
+    expect(await weather('location')).toContain('No location set')
+    expect(await weather('location Kiruna')).toContain('Not a location')
+    expect(await weather('location 67.86,20.23')).toBe('The sun follows 67.86, 20.23: the sun stays up all day today.')
+    expect(await caption()).toBe('day')
+    expect(await weather('location 59.33,18.07')).toMatch(/^The sun follows 59.33, 18.07: up 03:3\d, down 22:0\d today\.$/)
+    expect(await weather('location off')).toContain('No location set')
+    expect(await caption()).toBe('not day')
   })
 })
 

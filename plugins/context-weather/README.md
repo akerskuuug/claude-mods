@@ -22,17 +22,9 @@ Clouds get bigger and drift faster as the context fills, and the rain slants har
 
 ![Night, dawn, morning, afternoon, dusk, night, and a rainy night](docs/day.png)
 
-The sun crosses the sky between sunrise and sunset, local time. Dawn and dusk last as long as civil twilight does. Without a location, the sun rises at 6:00 and sets at 20:00, with 45 minutes of twilight on either side. Set `CONTEXT_WEATHER_LOCATION` to your latitude and longitude to follow the real sun instead, for example in `~/.claude/settings.json`:
+The sun crosses the sky between sunrise and sunset, local time. Dawn and dusk last as long as civil twilight does. Without a location, the sun rises at 6:00 and sets at 20:00, with 45 minutes of twilight on either side. Set your latitude and longitude with `/weather location 59.3,18.0` to follow the real sun instead. It is remembered across sessions.
 
-```json
-{
-  "env": {
-    "CONTEXT_WEATHER_LOCATION": "59.3,18.0"
-  }
-}
-```
-
-Sunrise, sunset and twilight are then worked out for each day (south and west are negative). Above the Arctic Circle the midnight sun stays up all day, and in polar night there is only a dim, warm noon, or no light at all where even twilight doesn't reach.
+Sunrise, sunset and twilight are then worked out for each day. Above the Arctic Circle the midnight sun stays up all day, and in polar night there is only a dim, warm noon, or no light at all where even twilight doesn't reach.
 
 Dawn and dusk tint the sky warm. At night a moon crosses the sky and stars twinkle wherever it is clear. The house's window is lit at night and whenever the weather turns gloomy. The time zone is read from `date +%z` once a minute, so daylight saving changes are picked up.
 
@@ -58,6 +50,7 @@ A visitor who arrives stays until they are out of sight, even if the weather cha
 
 - `/weather` opens or closes the window.
 - `/weather at 22:30` shows that time of day instead of the clock (handy for a preview); `/weather at now` follows the clock again.
+- `/weather location 59.3,18.0` follows the real sun at that latitude and longitude (south and west negative), and says when it rises and sets today. `/weather location` shows the one set; `/weather location off` goes back to 6:00 to 20:00.
 - `/weather visit cow` sends a visitor by now, whatever the weather: `birds`, `cat`, `star`, `owl`, `kite`, `plane`, `umbrella`, `duck`, `cow`, `bike`, `door`, `lost-umbrella`, `butterfly`, `dog`, `cyclist`, `balloon`, `satellite`, `aurora`, `bats`, `fireflies`, `geese` or `ufo` (plurals and a few other names work too).
 
 ## Where it shows

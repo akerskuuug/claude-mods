@@ -97,6 +97,12 @@ export function parseLocation(text: string): { lat: number; lon: number } | null
   return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null
 }
 
+/** Hours since midnight as `03:30`, wrapping past midnight either way. */
+export function formatClock(hour: number): string {
+  const minutes = Math.round((((hour % 24) + 24) % 24) * 60) % 1440
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+}
+
 /** Hours since local midnight, 0..24, from epoch ms and the UTC offset in minutes. */
 export function localHour(ms: number, offsetMinutes: number): number {
   const minutes = Math.floor(ms / 60_000) + offsetMinutes
@@ -1176,7 +1182,8 @@ let lastColumns = DEFAULT_COLUMNS
 let hour = 12 // local time of day the scene shows
 let clockHour = 12 // the real one
 let pinned: number | null = null // a time /weather at set, or null to follow the clock
-let sun = DEFAULT_SUN // today's sunrise and sunset where the person is
+let place: { lat: number; lon: number } | null = null // set by /weather location, kept in the store
+let sun = DEFAULT_SUN // today's sunrise and sunset there
 let isAutoOpened = false // opened unasked once this load, where it would be a sidebar
 let visitor: Visitor | null = null // whoever is passing through now
 let visitAt = 0 // the frame the next visit is due
@@ -1198,10 +1205,6 @@ async function syncClock($: EngineInterface) {
   const minutes = offset ?? -new Date().getTimezoneOffset()
   clockHour = localHour(now, minutes)
   // Once a minute is plenty: the drawing only reads the result.
-  let place: { lat: number; lon: number } | null = null
-  try {
-    place = parseLocation((await $.env.get('CONTEXT_WEATHER_LOCATION')) ?? '')
-  } catch {}
   sun = place ? sunDay(now, place.lat, place.lon, minutes) : DEFAULT_SUN
   hour = pinned ?? clockHour
   const next = dayPhase(hour, sun)
@@ -1232,11 +1235,14 @@ export const register: Register = on => {
     await $.command.register({
       name: 'weather',
       description:
-        'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock, "visit <name>" sends a visitor by',
-      argumentHint: '[at HH:MM|now|visit <visitor>]',
+        'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock, "location 59.3,18.0" follows the sun there, "visit <name>" sends a visitor by',
+      argumentHint: '[at HH:MM|now|location <lat,lon>|off|visit <visitor>]',
     })
     await resetWeather($)
     pinned = await read($, override)
+    try {
+      place = parseLocation(String((await $.store.get('location')) ?? ''))
+    } catch {}
     await syncClock($)
     visitAt = frame + nextGap(Math.random())
     $.clock.every(60_000, () => syncClock($))
@@ -1290,6 +1296,27 @@ export const register: Register = on => {
       await update($, override, () => wanted)
       await syncClock($)
       return openPane($, wanted === null ? 'The weather follows the clock again.' : `The weather shows ${at[1]!.trim()}.`)
+    }
+    const where = /^location(?:\s+(.*))?$/.exec(e.args.trim())
+    if (where) {
+      const text = where[1]?.trim() ?? ''
+      if (text === 'off') {
+        place = null
+        await $.store.delete('location')
+      } else if (text) {
+        const wanted = parseLocation(text)
+        if (!wanted) return { text: `Not a location: ${text}. Try /weather location 59.3,18.0 (latitude, longitude).` }
+        place = wanted
+        await $.store.set('location', `${wanted.lat},${wanted.lon}`)
+      }
+      await syncClock($)
+      if (!place) return { text: 'No location set: the sun rises at 6:00 and sets at 20:00. Set one with /weather location 59.3,18.0.' }
+      const today = isMidnightSun(sun)
+        ? 'the sun stays up all day today'
+        : sun.set <= sun.rise
+          ? 'the sun stays down all day today'
+          : `up ${formatClock(sun.rise)}, down ${formatClock(sun.set)} today`
+      return { text: `The sun follows ${place.lat}, ${place.lon}: ${today}.` }
     }
     const guest = /^visit\s+(\S+)$/.exec(e.args.trim())
     if (guest) {
