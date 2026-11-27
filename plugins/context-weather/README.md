@@ -22,7 +22,19 @@ Clouds get bigger and drift faster as the context fills, and the rain slants har
 
 ![Night, dawn, morning, afternoon, dusk, night, and a rainy night](docs/day.png)
 
-The sun rises at 6:00 and sets at 20:00, local time, crossing the sky between them, with half an hour of twilight on either side. Dawn and dusk tint the sky warm. At night a moon crosses the sky and stars twinkle wherever it is clear. The house's window is lit at night and whenever the weather turns gloomy. The time zone is read from `date +%z` once a minute, so daylight saving changes are picked up.
+The sun crosses the sky between sunrise and sunset, local time. Dawn and dusk last as long as civil twilight does. Without a location, the sun rises at 6:00 and sets at 20:00, with 45 minutes of twilight on either side. Set `CONTEXT_WEATHER_LOCATION` to your latitude and longitude to follow the real sun instead, for example in `~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "CONTEXT_WEATHER_LOCATION": "59.3,18.0"
+  }
+}
+```
+
+Sunrise, sunset and twilight are then worked out for each day (south and west are negative). Above the Arctic Circle the midnight sun stays up all day, and in polar night there is only a dim, warm noon, or no light at all where even twilight doesn't reach.
+
+Dawn and dusk tint the sky warm. At night a moon crosses the sky and stars twinkle wherever it is clear. The house's window is lit at night and whenever the weather turns gloomy. The time zone is read from `date +%z` once a minute, so daylight saving changes are picked up.
 
 ## Visitors
 

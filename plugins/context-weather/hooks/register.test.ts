@@ -8,6 +8,8 @@ import {
   forecast,
   groundLine,
   localHour,
+  parseLocation,
+  sunDay,
   nextGap,
   paint,
   parseClock,
@@ -86,11 +88,48 @@ describe('time of day', () => {
   })
 
   test('names the phases and dims the light', async () => {
-    expect([3, 6, 12, 20, 23].map(dayPhase)).toEqual(['night', 'dawn', 'day', 'dusk', 'night'])
+    expect([3, 6, 12, 20, 23].map(h => dayPhase(h))).toEqual(['night', 'dawn', 'day', 'dusk', 'night'])
     expect(daylight(12)).toBe(1)
     expect(daylight(2)).toBe(0)
     expect(daylight(20)).toBeGreaterThan(0)
     expect(daylight(20)).toBeLessThan(1)
+  })
+
+  test('works out sunrise and sunset from where you are', async () => {
+    const clock = (h: number) => {
+      const m = Math.round((((h % 24) + 24) % 24) * 60)
+      return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+    }
+    const at = (date: string, lat: number, lon: number, offset: number) => sunDay(Date.parse(`${date}T12:00:00Z`), lat, lon, offset)
+    // Stockholm, against the almanac.
+    const midsummer = at('2026-06-21', 59.33, 18.07, 120)
+    expect([clock(midsummer.rise), clock(midsummer.set)]).toEqual(['03:30', '22:08'])
+    const midwinter = at('2026-12-21', 59.33, 18.07, 60)
+    expect([clock(midwinter.rise), clock(midwinter.set)]).toEqual(['08:43', '14:48'])
+    expect(midwinter.twilight).toBeGreaterThan(0.75)
+    // Kiruna: midnight sun all day in June, a dim noon in December.
+    const kirunaJune = at('2026-06-21', 67.86, 20.23, 120)
+    expect([0, 6, 12, 18, 23.9].map(h => daylight(h, kirunaJune))).toEqual([1, 1, 1, 1, 1])
+    expect(dayPhase(0, kirunaJune)).toBe('day')
+    const kirunaDec = at('2026-12-21', 67.86, 20.23, 60)
+    expect(daylight(0, kirunaDec)).toBe(0)
+    expect(daylight(kirunaDec.rise, kirunaDec)).toBeGreaterThan(0)
+    expect(daylight(kirunaDec.rise, kirunaDec)).toBeLessThan(1)
+    expect(dayPhase(kirunaDec.rise - 0.5, kirunaDec)).toBe('dawn')
+    expect(dayPhase(kirunaDec.rise + 0.5, kirunaDec)).toBe('dusk')
+    expect(paint(30, 40, 0, 5, 12, null, kirunaDec)).toBeDefined()
+    // Deep polar night, with no twilight at all.
+    const svalbard = at('2026-12-21', 78.22, 15.65, 60)
+    expect([0, 12].map(h => daylight(h, svalbard))).toEqual([0, 0])
+    expect(dayPhase(15, svalbard)).toBe('night')
+  })
+
+  test('reads a location as latitude and longitude', async () => {
+    expect(parseLocation('59.3,18.0')).toEqual({ lat: 59.3, lon: 18 })
+    expect(parseLocation(' -33.9 , 151.2 ')).toEqual({ lat: -33.9, lon: 151.2 })
+    expect(parseLocation('91,0')).toBe(null)
+    expect(parseLocation('Stockholm')).toBe(null)
+    expect(parseLocation('')).toBe(null)
   })
 
   test('night is darker than noon, and a clear night has stars', async () => {
@@ -231,6 +270,35 @@ describe('a fresh conversation', () => {
     offset = '+1100'
     await $.classic.SessionStart({ source: 'clear' } as never)
     expect(await caption()).toBe('night')
+  })
+
+  test('CONTEXT_WEATHER_LOCATION brings the midnight sun to Kiruna', async ($, on) => {
+    // Midnight in Kiruna at midsummer: night by the default day, broad daylight by the real one.
+    mock.clock(on, { now: Date.parse('2026-06-21T22:00:00Z') })
+    let location: string | undefined
+    on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+    on('command.register', async () => ({ value: {} }) as never)
+    on('session.usage', async () => ({ value: { context: { tokens: 0, window: 200_000 }, rateLimits: [] } }) as never)
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: '+0200\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as never)
+    on('env.get', async () => ({ value: location }) as never)
+    on('classic.SessionStart', async () => ({}) as never)
+    const caption = async () => {
+      const ui = await $.ui.mount({
+        plugin: 'context-weather',
+        surface: 'desktop',
+        component: 'Pane',
+        requestId: 'context-weather',
+        props: { title: 'Weather', isFocused: false, bodyColumns: 30, placement: 'dock', scroll: { offset: 0, bodyRows: 20 } } as never,
+      } as never)
+      const text = await ui.find({ type: 'Text', text: /clear skies/ })
+      await ui.unmount()
+      return text
+    }
+    await $.session.start({ cwd: '/', surface: 'terminal' } as never)
+    expect(await caption()).toEqual(expect.objectContaining({ text: expect.stringMatching(/^night · /) }))
+    location = '67.86,20.23'
+    await $.classic.SessionStart({ source: 'clear' } as never)
+    expect(await caption()).toEqual(expect.objectContaining({ text: expect.stringMatching(/^clear skies/) }))
   })
 })
 
