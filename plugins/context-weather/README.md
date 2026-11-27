@@ -22,7 +22,11 @@ Clouds get bigger and drift faster as the context fills, and the rain slants har
 
 ![Night, dawn, morning, afternoon, dusk, night, and a rainy night](docs/day.png)
 
-The sun rises at 6:00 and sets at 20:00, local time, crossing the sky between them, with half an hour of twilight on either side. Dawn and dusk tint the sky warm. At night a moon crosses the sky and stars twinkle wherever it is clear. The house's window is lit at night and whenever the weather turns gloomy. The time zone is read from `date +%z` once a minute, so daylight saving changes are picked up.
+The sun crosses the sky between sunrise and sunset, local time. Dawn and dusk last as long as civil twilight does. Without a location, the sun rises at 6:00 and sets at 20:00, with 45 minutes of twilight on either side. To follow the real sun instead, run `/weather location <latitude>,<longitude>` with your own coordinates in decimal degrees (south and west negative). For example, `/weather location 51.48,0` is the Royal Observatory in Greenwich. Your location is remembered across sessions.
+
+Sunrise, sunset and twilight are then worked out for each day. Above the Arctic Circle the midnight sun stays up all day, and in polar night there is only a dim, warm noon, or no light at all where even twilight doesn't reach.
+
+Dawn and dusk tint the sky warm. At night a moon crosses the sky and stars twinkle wherever it is clear. The house's window is lit at night and whenever the weather turns gloomy. The time zone is read from `date +%z` once a minute, so daylight saving changes are picked up.
 
 ## Visitors
 
@@ -46,6 +50,7 @@ A visitor who arrives stays until they are out of sight, even if the weather cha
 
 - `/weather` opens or closes the window.
 - `/weather at 22:30` shows that time of day instead of the clock (handy for a preview); `/weather at now` follows the clock again.
+- `/weather location <latitude>,<longitude>` follows the real sun where you are, and says when it rises and sets today. Use your own coordinates in decimal degrees, south and west negative: `/weather location 51.48,0` is the Royal Observatory in Greenwich. `/weather location` shows the one set; `/weather location off` goes back to 6:00 to 20:00.
 - `/weather visit cow` sends a visitor by now, whatever the weather: `birds`, `cat`, `star`, `owl`, `kite`, `plane`, `umbrella`, `duck`, `cow`, `bike`, `door`, `lost-umbrella`, `butterfly`, `dog`, `cyclist`, `balloon`, `satellite`, `aurora`, `bats`, `fireflies`, `geese` or `ufo` (plurals and a few other names work too).
 
 ## Where it shows

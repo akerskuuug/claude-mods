@@ -45,10 +45,63 @@ export function rainfall(s: number): number {
 
 // ---------------------------------------------------------------- the day
 
-// A simple day: sunrise at 6, sunset at 20, twilight half an hour either side.
-const SUNRISE = 6
-const SUNSET = 20
-const TWILIGHT = 0.75
+/** Sunrise and sunset in local clock hours, and how long civil twilight lasts either side. */
+export interface Sun {
+  rise: number
+  set: number
+  twilight: number
+}
+
+// The day when nobody says where they are: sunrise at 6, sunset at 20.
+export const DEFAULT_SUN: Sun = { rise: 6, set: 20, twilight: 0.75 }
+
+const RAD = Math.PI / 180
+
+/**
+ * The sun's day at `lat`, `lon` (degrees, east positive) on the local date of `ms`,
+ * by NOAA's simplified solar formula: good to a minute or two. Where the sun
+ * never sets, rise and set are 12 hours either side of solar noon; where it
+ * never rises, both are solar noon, with whatever twilight reaches it.
+ */
+export function sunDay(ms: number, lat: number, lon: number, offsetMinutes: number): Sun {
+  const day = Math.floor((ms + offsetMinutes * 60_000) / 86_400_000)
+  const yearStart = Date.UTC(new Date(day * 86_400_000).getUTCFullYear(), 0, 1) / 86_400_000
+  const g = ((2 * Math.PI) / 365) * (day - yearStart)
+  const eot =
+    229.18 *
+    (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g))
+  const decl =
+    0.006918 -
+    0.399912 * Math.cos(g) +
+    0.070257 * Math.sin(g) -
+    0.006758 * Math.cos(2 * g) +
+    0.000907 * Math.sin(2 * g) -
+    0.002697 * Math.cos(3 * g) +
+    0.00148 * Math.sin(3 * g)
+  const noon = (720 - 4 * lon - eot + offsetMinutes) / 60
+  // Hours from noon until the sun is down to `altitude` degrees; clamped, so 0 or 12 at the poles.
+  const half = (altitude: number) => {
+    const c = (Math.sin(altitude * RAD) - Math.sin(lat * RAD) * Math.sin(decl)) / (Math.cos(lat * RAD) * Math.cos(decl))
+    return Math.acos(Math.max(-1, Math.min(1, c))) / RAD / 15
+  }
+  const h = half(-0.833)
+  return { rise: noon - h, set: noon + h, twilight: half(-6) - h }
+}
+
+/** `51.48,0` (latitude, longitude) as numbers; null for anything else. */
+export function parseLocation(text: string): { lat: number; lon: number } | null {
+  const m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(text)
+  if (!m) return null
+  const lat = Number(m[1])
+  const lon = Number(m[2])
+  return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null
+}
+
+/** Hours since midnight as `03:30`, wrapping past midnight either way. */
+export function formatClock(hour: number): string {
+  const minutes = Math.round((((hour % 24) + 24) % 24) * 60) % 1440
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+}
 
 /** Hours since local midnight, 0..24, from epoch ms and the UTC offset in minutes. */
 export function localHour(ms: number, offsetMinutes: number): number {
@@ -56,22 +109,46 @@ export function localHour(ms: number, offsetMinutes: number): number {
   return (((minutes % 1440) + 1440) % 1440) / 60
 }
 
+/** Whether the sun stays up all day; floating point can leave the day a hair short of 24 hours. */
+function isMidnightSun(sun: Sun): boolean {
+  return sun.set - sun.rise >= 24 - 1e-6
+}
+
+/** Hours between two times of day, the short way round the clock. */
+function apart(a: number, b: number): number {
+  const d = (((a - b) % 24) + 24) % 24
+  return Math.min(d, 24 - d)
+}
+
 /** 0 at night, 1 by day, easing through dawn and dusk. */
-export function daylight(hour: number): number {
-  const rise = clamp01((hour - (SUNRISE - TWILIGHT)) / (2 * TWILIGHT))
-  const set = clamp01((SUNSET + TWILIGHT - hour) / (2 * TWILIGHT))
-  return Math.min(rise, set)
+export function daylight(hour: number, sun: Sun = DEFAULT_SUN): number {
+  const { rise, set, twilight } = sun
+  if (isMidnightSun(sun)) return 1
+  if (twilight <= 0) return 0 // polar night, too deep for twilight
+  let light = 0
+  // Rise and set can fall outside 0..24 when they cross local midnight.
+  for (const h of [hour - 24, hour, hour + 24]) {
+    const up = clamp01((h - (rise - twilight)) / (2 * twilight))
+    const down = clamp01((set + twilight - h) / (2 * twilight))
+    light = Math.max(light, Math.min(up, down))
+  }
+  return light
 }
 
 /** 1 right at sunrise or sunset, fading to 0 an hour and a quarter away. */
-function glow(hour: number): number {
-  return clamp01(1 - Math.min(Math.abs(hour - SUNRISE), Math.abs(hour - SUNSET)) / 1.25)
+function glow(hour: number, sun: Sun): number {
+  if (sun.twilight <= 0 && !isMidnightSun(sun)) return 0 // polar night with not even twilight
+  return clamp01(1 - Math.min(apart(hour, sun.rise), apart(hour, sun.set)) / 1.25)
 }
 
-export function dayPhase(hour: number): DayPhase {
-  if (Math.abs(hour - SUNRISE) <= TWILIGHT) return 'dawn'
-  if (Math.abs(hour - SUNSET) <= TWILIGHT) return 'dusk'
-  return hour > SUNRISE && hour < SUNSET ? 'day' : 'night'
+export function dayPhase(hour: number, sun: Sun = DEFAULT_SUN): DayPhase {
+  const toRise = apart(hour, sun.rise)
+  const toSet = apart(hour, sun.set)
+  if (!isMidnightSun(sun) && Math.min(toRise, toSet) <= sun.twilight) {
+    // In polar night rise and set are one moment: before it is dawn, after it dusk.
+    return toRise < toSet || (toRise === toSet && hour < sun.rise) ? 'dawn' : 'dusk'
+  }
+  return daylight(hour, sun) >= 0.5 ? 'day' : 'night'
 }
 
 /** Parses `date +%z` (`+0200`, `-0530`) into minutes east of UTC. */
@@ -174,11 +251,11 @@ const RARE = 0.15
 const OVERCAST = 0.45
 
 /** Who might visit this sky, each with its odds; only those that suit it are listed. */
-export function visitorOdds(s: number, hour: number, hasHouse = true): [VisitorKind, number][] {
+export function visitorOdds(s: number, hour: number, hasHouse = true, sun: Sun = DEFAULT_SUN): [VisitorKind, number][] {
   if (s >= STORM) return STORM_VISITORS.map(k => [k, 1])
   if (s >= RAIN) return [['umbrella', 1], ['duck', 1]]
-  const phase = dayPhase(hour)
-  const light = daylight(hour)
+  const phase = dayPhase(hour, sun)
+  const light = daylight(hour, sun)
   const odds: [VisitorKind, number | false][] =
     s < 0.25
       ? phase === 'dawn'
@@ -201,8 +278,15 @@ export function visitorOdds(s: number, hour: number, hasHouse = true): [VisitorK
 }
 
 /** Who visits this sky; `roll` (0..1) picks by the odds, and `last` is not asked back at once. */
-export function visitorFor(s: number, hour: number, roll = 0, hasHouse = true, last: VisitorKind | null = null): VisitorKind {
-  const all = visitorOdds(s, hour, hasHouse)
+export function visitorFor(
+  s: number,
+  hour: number,
+  roll = 0,
+  hasHouse = true,
+  last: VisitorKind | null = null,
+  sun: Sun = DEFAULT_SUN,
+): VisitorKind {
+  const all = visitorOdds(s, hour, hasHouse, sun)
   const odds = all.length > 1 ? all.filter(([k]) => k !== last) : all
   const total = odds.reduce((sum, [, n]) => sum + n, 0)
   let at = clamp01(roll) * total
@@ -814,11 +898,11 @@ function blend(anchors: Pal[], s: number): Pal {
   }
 }
 
-function palette(s: number, hour: number): Pal {
+function palette(s: number, hour: number, sun: Sun): Pal {
   const day = blend(SKY, s)
   const night = blend(NIGHT, s)
-  const light = daylight(hour)
-  const warm = glow(hour) * (1 - s) // dawn and dusk colors, hidden by overcast
+  const light = daylight(hour, sun)
+  const warm = glow(hour, sun) * (1 - s) // dawn and dusk colors, hidden by overcast
   const pal: Pal = {
     top: mix(night.top, day.top, light),
     bottom: mix(night.bottom, day.bottom, light),
@@ -841,13 +925,21 @@ export function groundLine(h: number): number {
 
 /**
  * One frame of the scene as `w * h` pixels (0xRRGGBB), `s` the storminess 0..1
- * `hour` the local time of day, 0..24, and `visitor` whoever is passing through.
+ * `hour` the local time of day, 0..24, `visitor` whoever is passing through, and `sun` when it rises and sets.
  * Pure: the same arguments draw the same frame.
  */
-export function paint(w: number, h: number, s: number, frame: number, hour = 12, visitor: Visitor | null = null): Uint32Array {
+export function paint(
+  w: number,
+  h: number,
+  s: number,
+  frame: number,
+  hour = 12,
+  visitor: Visitor | null = null,
+  sun: Sun = DEFAULT_SUN,
+): Uint32Array {
   const px = new Uint32Array(w * h)
-  const pal = palette(s, hour)
-  const light = daylight(hour)
+  const pal = palette(s, hour, sun)
+  const light = daylight(hour, sun)
   const wind = 0.08 + s * 0.7
   const groundY = groundLine(h)
 
@@ -937,10 +1029,11 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
   }
 
   const sunAlpha = clamp01(1 - s * 2.6)
-  const sunT = (hour - (SUNRISE - 0.5)) / (SUNSET - SUNRISE + 1)
-  if (sunAlpha > 0 && sunT >= 0 && sunT <= 1) {
+  // Half an hour of arc either side of the day; no sun at all through polar night.
+  const sunT = ((((hour - (sun.rise - 0.5)) % 24) + 24) % 24) / (sun.set - sun.rise + 1)
+  if (sunAlpha > 0 && sun.set > sun.rise && sunT <= 1) {
     const { cx, cy } = arc(sunT)
-    const color = mix(0xffd34d, 0xff7a3d, glow(hour))
+    const color = mix(0xffd34d, 0xff7a3d, glow(hour, sun))
     disc(cx, cy, color, sunAlpha)
     const glint = frame % 16 < 8 ? 1 : 0
     for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
@@ -953,7 +1046,7 @@ export function paint(w: number, h: number, s: number, frame: number, hour = 12,
   }
 
   const moonAlpha = clamp01(1 - s * 2.2) * (1 - light)
-  const moonT = (((hour - SUNSET + 24) % 24) + 0.5) / (24 - (SUNSET - SUNRISE) + 1)
+  const moonT = (((((hour - sun.set) % 24) + 24) % 24) + 0.5) / (24 - (sun.set - sun.rise) + 1)
   if (moonAlpha > 0 && moonT <= 1) {
     const { cx, cy } = arc(moonT)
     disc(cx, cy, 0xe9e4c8, moonAlpha, { dx: Math.ceil(r * 0.7), dy: -Math.ceil(r * 0.4) })
@@ -1089,6 +1182,8 @@ let lastColumns = DEFAULT_COLUMNS
 let hour = 12 // local time of day the scene shows
 let clockHour = 12 // the real one
 let pinned: number | null = null // a time /weather at set, or null to follow the clock
+let place: { lat: number; lon: number } | null = null // set by /weather location, kept in the store
+let sun = DEFAULT_SUN // today's sunrise and sunset there
 let isAutoOpened = false // opened unasked once this load, where it would be a sidebar
 let visitor: Visitor | null = null // whoever is passing through now
 let visitAt = 0 // the frame the next visit is due
@@ -1106,9 +1201,13 @@ async function syncClock($: EngineInterface) {
     const run = await $.process.run(['date', '+%z'], { timeoutMs: 5_000 })
     if (run.exitCode === 0) offset = parseOffset(run.stdout)
   } catch {}
-  clockHour = localHour(await $.clock.now(), offset ?? -new Date().getTimezoneOffset())
+  const now = await $.clock.now()
+  const minutes = offset ?? -new Date().getTimezoneOffset()
+  clockHour = localHour(now, minutes)
+  // Once a minute is plenty: the drawing only reads the result.
+  sun = place ? sunDay(now, place.lat, place.lon, minutes) : DEFAULT_SUN
   hour = pinned ?? clockHour
-  const next = dayPhase(hour)
+  const next = dayPhase(hour, sun)
   await update($, phaseNow, () => next)
 }
 
@@ -1136,11 +1235,14 @@ export const register: Register = on => {
     await $.command.register({
       name: 'weather',
       description:
-        'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock, "visit <name>" sends a visitor by',
-      argumentHint: '[at HH:MM|now|visit <visitor>]',
+        'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock, "location <lat>,<lon>" follows the sun where you are, "visit <name>" sends a visitor by',
+      argumentHint: '[at HH:MM|now|location <lat,lon>|off|visit <visitor>]',
     })
     await resetWeather($)
     pinned = await read($, override)
+    try {
+      place = parseLocation(String((await $.store.get('location')) ?? ''))
+    } catch {}
     await syncClock($)
     visitAt = frame + nextGap(Math.random())
     $.clock.every(60_000, () => syncClock($))
@@ -1150,13 +1252,13 @@ export const register: Register = on => {
       if (visitor && frame - visitor.start >= visitLength(visitor.kind, size?.columns ?? lastColumns)) visitor = null
       if (!visitor && frame >= visitAt) {
         const hasHouse = size ? size.columns >= 16 && groundLine(size.rows * 2) >= 8 : lastColumns >= 16
-        visit(visitorFor(shown, hour, Math.random(), hasHouse, lastKind))
+        visit(visitorFor(shown, hour, Math.random(), hasHouse, lastKind, sun))
         visitAt = frame + nextGap(Math.random())
       }
       if (!size) return
       const { columns, rows } = size
       $.ui
-        .blit({ requestId: PANE, key: 'sky', cells: encode(paint(columns, rows * 2, shown, frame, hour, visitor), columns, rows) })
+        .blit({ requestId: PANE, key: 'sky', cells: encode(paint(columns, rows * 2, shown, frame, hour, visitor, sun), columns, rows) })
         .then(r => {
           if ('deny' in r && r.deny) size = null
         })
@@ -1194,6 +1296,27 @@ export const register: Register = on => {
       await update($, override, () => wanted)
       await syncClock($)
       return openPane($, wanted === null ? 'The weather follows the clock again.' : `The weather shows ${at[1]!.trim()}.`)
+    }
+    const where = /^location(?:\s+(.*))?$/.exec(e.args.trim())
+    if (where) {
+      const text = where[1]?.trim() ?? ''
+      if (text === 'off') {
+        place = null
+        await $.store.delete('location')
+      } else if (text) {
+        const wanted = parseLocation(text)
+        if (!wanted) return { text: `Not a location: ${text}. Use your latitude and longitude: /weather location <lat>,<lon>, for example /weather location 51.48,0 for Greenwich.` }
+        place = wanted
+        await $.store.set('location', `${wanted.lat},${wanted.lon}`)
+      }
+      await syncClock($)
+      if (!place) return { text: 'No location set: the sun rises at 6:00 and sets at 20:00. Set yours with /weather location <lat>,<lon>, for example /weather location 51.48,0 for Greenwich.' }
+      const today = isMidnightSun(sun)
+        ? 'the sun stays up all day today'
+        : sun.set <= sun.rise
+          ? 'the sun stays down all day today'
+          : `up ${formatClock(sun.rise)}, down ${formatClock(sun.set)} today`
+      return { text: `The sun follows ${place.lat}, ${place.lon}: ${today}.` }
     }
     const guest = /^visit\s+(\S+)$/.exec(e.args.trim())
     if (guest) {
@@ -1248,7 +1371,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Raster key="sky" columns={columns} rows={rows} cells={encode(paint(columns, rows * 2, shown, frame, hour, visitor), columns, rows)} />
+        <Raster key="sky" columns={columns} rows={rows} cells={encode(paint(columns, rows * 2, shown, frame, hour, visitor, sun), columns, rows)} />
         <Text dimColor wrap="truncate">
           {caption}
         </Text>
