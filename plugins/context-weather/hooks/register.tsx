@@ -103,6 +103,11 @@ export function localHour(ms: number, offsetMinutes: number): number {
   return (((minutes % 1440) + 1440) % 1440) / 60
 }
 
+/** Whether the sun stays up all day; floating point can leave the day a hair short of 24 hours. */
+function isMidnightSun(sun: Sun): boolean {
+  return sun.set - sun.rise >= 24 - 1e-6
+}
+
 /** Hours between two times of day, the short way round the clock. */
 function apart(a: number, b: number): number {
   const d = (((a - b) % 24) + 24) % 24
@@ -112,7 +117,7 @@ function apart(a: number, b: number): number {
 /** 0 at night, 1 by day, easing through dawn and dusk. */
 export function daylight(hour: number, sun: Sun = DEFAULT_SUN): number {
   const { rise, set, twilight } = sun
-  if (set - rise >= 24) return 1 // midnight sun
+  if (isMidnightSun(sun)) return 1
   if (twilight <= 0) return 0 // polar night, too deep for twilight
   let light = 0
   // Rise and set can fall outside 0..24 when they cross local midnight.
@@ -126,13 +131,14 @@ export function daylight(hour: number, sun: Sun = DEFAULT_SUN): number {
 
 /** 1 right at sunrise or sunset, fading to 0 an hour and a quarter away. */
 function glow(hour: number, sun: Sun): number {
+  if (sun.twilight <= 0 && !isMidnightSun(sun)) return 0 // polar night with not even twilight
   return clamp01(1 - Math.min(apart(hour, sun.rise), apart(hour, sun.set)) / 1.25)
 }
 
 export function dayPhase(hour: number, sun: Sun = DEFAULT_SUN): DayPhase {
   const toRise = apart(hour, sun.rise)
   const toSet = apart(hour, sun.set)
-  if (sun.set - sun.rise < 24 && Math.min(toRise, toSet) <= sun.twilight) {
+  if (!isMidnightSun(sun) && Math.min(toRise, toSet) <= sun.twilight) {
     // In polar night rise and set are one moment: before it is dawn, after it dusk.
     return toRise < toSet || (toRise === toSet && hour < sun.rise) ? 'dawn' : 'dusk'
   }

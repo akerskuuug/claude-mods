@@ -122,6 +122,12 @@ describe('time of day', () => {
     const svalbard = at('2026-12-21', 78.22, 15.65, 60)
     expect([0, 12].map(h => daylight(h, svalbard))).toEqual([0, 0])
     expect(dayPhase(15, svalbard)).toBe('night')
+    const horizon = (px: Uint32Array) => px[30 * 30 + 15]
+    expect(horizon(paint(30, 40, 0, 5, svalbard.rise, null, svalbard))).toBe(horizon(paint(30, 40, 0, 5, 0, null, svalbard)))
+    // Utqiaġvik in May, far from the time zone it is asked in: a day a rounding error short of 24 hours.
+    const utqiagvik = sunDay(Date.UTC(2026, 4, 21), 71.29, -156.79, 0)
+    expect([0, 12].map(h => daylight(h, utqiagvik))).toEqual([1, 1])
+    expect(dayPhase(12, utqiagvik)).toBe('day')
   })
 
   test('reads a location as latitude and longitude', async () => {
