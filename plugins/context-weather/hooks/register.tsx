@@ -1235,7 +1235,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'weather',
       description:
-        'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock, "location 51.48,0" follows the sun there, "visit <name>" sends a visitor by',
+        'Toggle the context weather window; "at 22:30" shows that time, "at now" follows the clock, "location <lat>,<lon>" follows the sun where you are, "visit <name>" sends a visitor by',
       argumentHint: '[at HH:MM|now|location <lat,lon>|off|visit <visitor>]',
     })
     await resetWeather($)
@@ -1305,12 +1305,12 @@ export const register: Register = on => {
         await $.store.delete('location')
       } else if (text) {
         const wanted = parseLocation(text)
-        if (!wanted) return { text: `Not a location: ${text}. Try /weather location 51.48,0 (latitude, longitude).` }
+        if (!wanted) return { text: `Not a location: ${text}. Use your latitude and longitude: /weather location <lat>,<lon>, for example /weather location 51.48,0 for Greenwich.` }
         place = wanted
         await $.store.set('location', `${wanted.lat},${wanted.lon}`)
       }
       await syncClock($)
-      if (!place) return { text: 'No location set: the sun rises at 6:00 and sets at 20:00. Set one with /weather location 51.48,0.' }
+      if (!place) return { text: 'No location set: the sun rises at 6:00 and sets at 20:00. Set yours with /weather location <lat>,<lon>, for example /weather location 51.48,0 for Greenwich.' }
       const today = isMidnightSun(sun)
         ? 'the sun stays up all day today'
         : sun.set <= sun.rise
